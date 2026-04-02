@@ -10,7 +10,7 @@ import pandas as pd
 import requests
 import streamlit as st
 
-APP_TITLE = "YVORA Wine Pairing"
+APP_TITLE = "YVORA Wine Pairing teste"
 
 BRAND_BG = "#EFE7DD"
 BRAND_BLUE = "#0E2A47"

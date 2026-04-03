@@ -1,7 +1,3 @@
-st.write("MENU secret runtime:", _get_secret("MENU_SHEET_URL", "VAZIO"))
-st.write("WINES secret runtime:", _get_secret("WINES_SHEET_URL", "VAZIO"))
-st.write("PAIRINGS secret runtime:", _get_secret("PAIRINGS_SHEET_URL", "VAZIO"))
-st.stop()
 import hashlib
 import io
 import re
@@ -121,7 +117,6 @@ def _extract_sheet_id_and_gid(url: str) -> Tuple[str, str]:
     parsed = urlparse(u)
 
     gid = "0"
-
     if parsed.fragment:
         frag_qs = parse_qs(parsed.fragment)
         gid = (frag_qs.get("gid", [gid]) or [gid])[0] or gid
@@ -140,22 +135,18 @@ def _extract_sheet_id_and_gid(url: str) -> Tuple[str, str]:
 def _to_gsheet_csv_export_url(url: str) -> str:
     u = norm_text(url).replace("\n", "").strip()
     if not u:
-        return ""
+        raise ValueError("URL vazia.")
 
-    if "googleusercontent.com" in u:
-        raise ValueError(
-            "Use o link original da planilha do Google Sheets em docs.google.com/spreadsheets, e não um link temporário googleusercontent."
-        )
+    if "docs.google.com/spreadsheets" not in u:
+        raise ValueError(f"URL inválida para Google Sheets: {u}")
 
-    if "docs.google.com/spreadsheets" in u:
-        sheet_id, gid = _extract_sheet_id_and_gid(u)
-        if not sheet_id:
-            raise ValueError("Não foi possível identificar o ID da planilha.")
-        return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?" + urlencode(
-            {"format": "csv", "gid": gid or "0"}
-        )
+    sheet_id, gid = _extract_sheet_id_and_gid(u)
+    if not sheet_id:
+        raise ValueError(f"Não foi possível identificar o ID da planilha na URL: {u}")
 
-    return u
+    return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?" + urlencode(
+        {"format": "csv", "gid": gid or "0"}
+    )
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -193,10 +184,8 @@ def sidebar_brand():
 
 
 @st.cache_data(ttl=45)
-def load_csv_from_url(url: str) -> pd.DataFrame:
+def load_csv_from_url(url: str, source_name: str = "SHEET") -> pd.DataFrame:
     export_url = _to_gsheet_csv_export_url(url)
-    if not export_url:
-        raise ValueError("URL vazia.")
 
     headers = {
         "User-Agent": "Mozilla/5.0",
@@ -207,30 +196,53 @@ def load_csv_from_url(url: str) -> pd.DataFrame:
         r = requests.get(export_url, headers=headers, timeout=30)
         r.raise_for_status()
     except requests.HTTPError as e:
+        final_url = getattr(e.response, "url", export_url) if getattr(e, "response", None) is not None else export_url
+        status = getattr(e.response, "status_code", "desconhecido") if getattr(e, "response", None) is not None else "desconhecido"
         raise ValueError(
-            "Falha ao baixar CSV do Google Sheets.\n\n"
-            "Verifique:\n"
-            "1) A planilha está compartilhada como 'Anyone with the link can view'.\n"
-            "2) O link aponta para a aba correta (gid correto).\n"
-            "3) Use o link normal do Sheets (edit#gid=...) que o app converte automaticamente.\n\n"
-            f"Detalhe técnico: {e}"
+            f"[{source_name}] erro HTTP ao baixar CSV.\n"
+            f"Status: {status}\n"
+            f"URL original: {url}\n"
+            f"URL exportada: {export_url}\n"
+            f"URL final: {final_url}\n\n"
+            f"Revise principalmente o gid e o compartilhamento desta planilha."
         )
     except requests.RequestException as e:
-        raise ValueError(f"Erro ao acessar a planilha: {e}")
+        raise ValueError(
+            f"[{source_name}] erro de conexão ao acessar a planilha.\n"
+            f"URL original: {url}\n"
+            f"URL exportada: {export_url}\n"
+            f"Detalhe: {e}"
+        )
 
     csv_text = _decode_csv_bytes(r.content)
 
     if not csv_text.strip():
-        raise ValueError("A planilha retornou vazia.")
+        raise ValueError(
+            f"[{source_name}] a planilha retornou vazia.\n"
+            f"URL original: {url}\n"
+            f"URL exportada: {export_url}"
+        )
 
     content_type = r.headers.get("Content-Type", "").lower()
     stripped = csv_text.lstrip().lower()
+
     if "text/html" in content_type or stripped.startswith("<!doctype html") or stripped.startswith("<html"):
         raise ValueError(
-            "O Google não retornou CSV. Verifique se a planilha está compartilhada corretamente e se o gid está apontando para a aba certa."
+            f"[{source_name}] o Google retornou HTML em vez de CSV.\n"
+            f"URL original: {url}\n"
+            f"URL exportada: {export_url}\n"
+            f"Isso normalmente indica problema de permissão, gid inválido ou link incorreto."
         )
 
-    return pd.read_csv(io.StringIO(csv_text), dtype=str, keep_default_na=False)
+    try:
+        return pd.read_csv(io.StringIO(csv_text), dtype=str, keep_default_na=False)
+    except Exception as e:
+        raise ValueError(
+            f"[{source_name}] o download aconteceu, mas o conteúdo não pôde ser lido como CSV.\n"
+            f"URL original: {url}\n"
+            f"URL exportada: {export_url}\n"
+            f"Detalhe: {e}"
+        )
 
 
 def normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
@@ -937,9 +949,10 @@ def load_all_data() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     if not pairings_url:
         raise ValueError("PAIRINGS_SHEET_URL não configurado.")
 
-    menu_df = normalize_cols(load_csv_from_url(menu_url))
-    wines_df = normalize_cols(load_csv_from_url(wines_url))
-    pair_df = normalize_cols(load_csv_from_url(pairings_url))
+    menu_df = normalize_cols(load_csv_from_url(menu_url, "MENU"))
+    wines_df = normalize_cols(load_csv_from_url(wines_url, "WINES"))
+    pair_df = normalize_cols(load_csv_from_url(pairings_url, "PAIRINGS"))
+
     return menu_df, wines_df, pair_df
 
 
@@ -1193,6 +1206,11 @@ def dm_login_block() -> bool:
 
 
 def main():
+    st.write("MENU secret runtime:", _get_secret("MENU_SHEET_URL", "VAZIO"))
+    st.write("WINES secret runtime:", _get_secret("WINES_SHEET_URL", "VAZIO"))
+    st.write("PAIRINGS secret runtime:", _get_secret("PAIRINGS_SHEET_URL", "VAZIO"))
+    st.stop()
+
     set_page_style()
     sidebar_brand()
     dm = dm_login_block()

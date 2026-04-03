@@ -1,3 +1,7 @@
+st.write("MENU secret runtime:", _get_secret("MENU_SHEET_URL", "VAZIO"))
+st.write("WINES secret runtime:", _get_secret("WINES_SHEET_URL", "VAZIO"))
+st.write("PAIRINGS secret runtime:", _get_secret("PAIRINGS_SHEET_URL", "VAZIO"))
+st.stop()
 import hashlib
 import io
 import re

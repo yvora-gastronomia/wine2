@@ -1,6 +1,3 @@
-import streamlit as st
-st.write("AGORA VAI")
-st.stop()
 import hashlib
 import io
 import re
@@ -13,7 +10,7 @@ import pandas as pd
 import requests
 import streamlit as st
 
-APP_TITLE = "YVORA Wine Pairing teste"
+APP_TITLE = "YVORA Wine Pairing"
 
 BRAND_BG = "#EFE7DD"
 BRAND_BLUE = "#0E2A47"
@@ -120,6 +117,7 @@ def _extract_sheet_id_and_gid(url: str) -> Tuple[str, str]:
     parsed = urlparse(u)
 
     gid = "0"
+
     if parsed.fragment:
         frag_qs = parse_qs(parsed.fragment)
         gid = (frag_qs.get("gid", [gid]) or [gid])[0] or gid
@@ -213,6 +211,8 @@ def load_csv_from_url(url: str) -> pd.DataFrame:
             "3) Use o link normal do Sheets (edit#gid=...) que o app converte automaticamente.\n\n"
             f"Detalhe técnico: {e}"
         )
+    except requests.RequestException as e:
+        raise ValueError(f"Erro ao acessar a planilha: {e}")
 
     csv_text = _decode_csv_bytes(r.content)
 
@@ -220,7 +220,8 @@ def load_csv_from_url(url: str) -> pd.DataFrame:
         raise ValueError("A planilha retornou vazia.")
 
     content_type = r.headers.get("Content-Type", "").lower()
-    if "text/html" in content_type or csv_text.lstrip().lower().startswith("<!doctype html") or csv_text.lstrip().lower().startswith("<html"):
+    stripped = csv_text.lstrip().lower()
+    if "text/html" in content_type or stripped.startswith("<!doctype html") or stripped.startswith("<html"):
         raise ValueError(
             "O Google não retornou CSV. Verifique se a planilha está compartilhada corretamente e se o gid está apontando para a aba certa."
         )

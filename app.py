@@ -4,7 +4,7 @@ import re
 import unicodedata
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import parse_qs, urlparse
 
 import pandas as pd
 import requests
@@ -119,7 +119,6 @@ def _extract_sheet_id_and_gid(url: str) -> Tuple[str, str]:
     parsed = urlparse(u)
 
     gid = "0"
-
     if parsed.fragment:
         frag_qs = parse_qs(parsed.fragment)
         gid = (frag_qs.get("gid", [gid]) or [gid])[0] or gid
@@ -133,23 +132,6 @@ def _extract_sheet_id_and_gid(url: str) -> Tuple[str, str]:
         return m.group(1), gid
 
     return "", gid
-
-
-def _to_gsheet_csv_export_url(url: str) -> str:
-    u = norm_text(url).replace("\n", "").strip()
-    if not u:
-        raise ValueError("URL vazia.")
-
-    if "docs.google.com/spreadsheets" not in u:
-        raise ValueError(f"URL inválida para Google Sheets: {u}")
-
-    sheet_id, gid = _extract_sheet_id_and_gid(u)
-    if not sheet_id:
-        raise ValueError(f"Não foi possível identificar o ID da planilha na URL: {u}")
-
-    return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?" + urlencode(
-        {"format": "csv", "gid": gid or "0"}
-    )
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -186,66 +168,97 @@ def sidebar_brand():
         st.caption("YVORA | Meat & Cheese Lab")
 
 
+def _candidate_sheet_csv_urls(url: str) -> List[str]:
+    u = norm_text(url).replace("\n", "").strip()
+    if not u:
+        raise ValueError("URL vazia.")
+
+    if "docs.google.com/spreadsheets" not in u:
+        raise ValueError(f"URL inválida para Google Sheets: {u}")
+
+    sheet_id, gid = _extract_sheet_id_and_gid(u)
+    if not sheet_id:
+        raise ValueError(f"Não foi possível identificar o ID da planilha na URL: {u}")
+
+    gid = gid or "0"
+
+    return [
+        f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&gid={gid}",
+        f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}",
+    ]
+
+
 @st.cache_data(ttl=45)
 def load_csv_from_url(url: str, source_name: str = "SHEET") -> pd.DataFrame:
-    export_url = _to_gsheet_csv_export_url(url)
+    original_url = norm_text(url).replace("\n", "").strip()
+    candidate_urls = _candidate_sheet_csv_urls(original_url)
 
     headers = {
         "User-Agent": "Mozilla/5.0",
         "Accept": "text/csv,application/csv,text/plain,*/*",
     }
 
-    try:
-        r = requests.get(export_url, headers=headers, timeout=30)
-        r.raise_for_status()
-    except requests.HTTPError as e:
-        final_url = getattr(e.response, "url", export_url) if getattr(e, "response", None) is not None else export_url
-        status = getattr(e.response, "status_code", "desconhecido") if getattr(e, "response", None) is not None else "desconhecido"
-        raise ValueError(
-            f"[{source_name}] erro HTTP ao baixar CSV.\n"
-            f"Status: {status}\n"
-            f"URL original: {url}\n"
-            f"URL exportada: {export_url}\n"
-            f"URL final: {final_url}\n\n"
-            f"Revise principalmente o gid e o compartilhamento desta planilha."
-        )
-    except requests.RequestException as e:
-        raise ValueError(
-            f"[{source_name}] erro de conexão ao acessar a planilha.\n"
-            f"URL original: {url}\n"
-            f"URL exportada: {export_url}\n"
-            f"Detalhe: {e}"
-        )
+    last_error = None
 
-    csv_text = _decode_csv_bytes(r.content)
+    for export_url in candidate_urls:
+        try:
+            r = requests.get(export_url, headers=headers, timeout=30)
+            r.raise_for_status()
 
-    if not csv_text.strip():
-        raise ValueError(
-            f"[{source_name}] a planilha retornou vazia.\n"
-            f"URL original: {url}\n"
-            f"URL exportada: {export_url}"
-        )
+            csv_text = _decode_csv_bytes(r.content)
 
-    content_type = r.headers.get("Content-Type", "").lower()
-    stripped = csv_text.lstrip().lower()
+            if not csv_text.strip():
+                last_error = ValueError(
+                    f"[{source_name}] retorno vazio.\n"
+                    f"URL original: {original_url}\n"
+                    f"URL exportada: {export_url}"
+                )
+                continue
 
-    if "text/html" in content_type or stripped.startswith("<!doctype html") or stripped.startswith("<html"):
-        raise ValueError(
-            f"[{source_name}] o Google retornou HTML em vez de CSV.\n"
-            f"URL original: {url}\n"
-            f"URL exportada: {export_url}\n"
-            f"Isso normalmente indica problema de permissão, gid inválido ou link incorreto."
-        )
+            content_type = r.headers.get("Content-Type", "").lower()
+            stripped = csv_text.lstrip().lower()
 
-    try:
-        return pd.read_csv(io.StringIO(csv_text), dtype=str, keep_default_na=False)
-    except Exception as e:
-        raise ValueError(
-            f"[{source_name}] o download aconteceu, mas o conteúdo não pôde ser lido como CSV.\n"
-            f"URL original: {url}\n"
-            f"URL exportada: {export_url}\n"
-            f"Detalhe: {e}"
-        )
+            if "text/html" in content_type or stripped.startswith("<!doctype html") or stripped.startswith("<html"):
+                last_error = ValueError(
+                    f"[{source_name}] Google retornou HTML em vez de CSV.\n"
+                    f"URL original: {original_url}\n"
+                    f"URL exportada: {export_url}\n"
+                    f"Isso normalmente indica problema de permissão, gid inválido ou link incorreto."
+                )
+                continue
+
+            try:
+                return pd.read_csv(io.StringIO(csv_text), dtype=str, keep_default_na=False)
+            except Exception as e:
+                last_error = ValueError(
+                    f"[{source_name}] download OK, mas leitura CSV falhou.\n"
+                    f"URL original: {original_url}\n"
+                    f"URL exportada: {export_url}\n"
+                    f"Detalhe: {e}"
+                )
+                continue
+
+        except requests.HTTPError as e:
+            final_url = getattr(e.response, "url", export_url) if getattr(e, "response", None) is not None else export_url
+            status = getattr(e.response, "status_code", "desconhecido") if getattr(e, "response", None) is not None else "desconhecido"
+            last_error = ValueError(
+                f"[{source_name}] erro HTTP ao baixar CSV.\n"
+                f"Status: {status}\n"
+                f"URL original: {original_url}\n"
+                f"URL exportada: {export_url}\n"
+                f"URL final: {final_url}"
+            )
+            continue
+        except requests.RequestException as e:
+            last_error = ValueError(
+                f"[{source_name}] erro de conexão.\n"
+                f"URL original: {original_url}\n"
+                f"URL exportada: {export_url}\n"
+                f"Detalhe: {e}"
+            )
+            continue
+
+    raise last_error if last_error else ValueError(f"[{source_name}] Falha desconhecida ao carregar planilha.")
 
 
 def normalize_cols(df: pd.DataFrame) -> pd.DataFrame:

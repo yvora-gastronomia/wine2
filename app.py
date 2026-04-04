@@ -600,7 +600,6 @@ def summarize_single_title(title: str) -> str:
 
     mapping = [
         ("steak tartare com fonduta quattro formaggi", "steak tartare"),
-        ("tartare de atum com burrata e parmesao", "tartare de atum"),
         ("tartare de atum com burrata, parmesao e pistache tostado", "tartare de atum"),
         ("tartare de atum fresco com chevre cremoso e azeite citrico", "tartare de atum"),
         ("croquetta de parma", "croquetta de parma"),
@@ -812,6 +811,48 @@ def render_icon_row(row: Dict, wine_type: str):
         st.markdown("".join(chips), unsafe_allow_html=True)
 
 
+def standardize_menu(menu_df: pd.DataFrame) -> pd.DataFrame:
+    df = menu_df.copy()
+
+    def pick(opts: List[str]) -> str:
+        for c in opts:
+            if c in df.columns:
+                return c
+        return ""
+
+    c_id = pick(["id_prato", "id", "prato_id"])
+    c_nome = pick(["nome_prato", "prato", "nome", "title"])
+    c_desc = pick(["descricao_prato", "descricao", "descrição", "desc"])
+    c_ativo = pick(["ativo", "active", "status"])
+
+    if "id" in df.columns and not c_id:
+        c_id = "id"
+    if "prato" in df.columns and not c_nome:
+        c_nome = "prato"
+    if "nome" in df.columns and not c_nome:
+        c_nome = "nome"
+    if "descrição" in df.columns and not c_desc:
+        c_desc = "descrição"
+    if "descricao" in df.columns and not c_desc:
+        c_desc = "descricao"
+
+    out = pd.DataFrame()
+    out["id_prato"] = df[c_id] if c_id else ""
+    out["nome_prato"] = df[c_nome] if c_nome else ""
+    out["descricao_prato"] = df[c_desc] if c_desc else ""
+    out["ativo"] = df[c_ativo] if c_ativo else "1"
+
+    out["id_prato"] = out["id_prato"].apply(norm_text)
+    out["nome_prato"] = out["nome_prato"].apply(clean_display_text)
+    out["descricao_prato"] = out["descricao_prato"].apply(clean_display_text)
+    out["ativo"] = out["ativo"].apply(lambda x: 1 if norm_text(x).lower() in ["1", "1.0", "true", "sim"] else 0)
+
+    m = out["id_prato"].eq("")
+    out.loc[m, "id_prato"] = out.loc[m, "nome_prato"]
+    out = out[(out["nome_prato"] != "") & (out["ativo"] == 1)].copy()
+    return out.drop_duplicates(subset=["id_prato", "nome_prato"])
+
+
 def _normalize_wine_type(raw: str) -> str:
     t = norm_text(raw).lower()
     if not t:
@@ -825,6 +866,120 @@ def _normalize_wine_type(raw: str) -> str:
     if "tinto" in t or "red" in t:
         return "Tinto"
     return clean_display_text(raw.title())
+
+
+def standardize_wines(wines_df: pd.DataFrame) -> pd.DataFrame:
+    df = wines_df.copy()
+
+    def pick(opts: List[str]) -> str:
+        for c in opts:
+            if c in df.columns:
+                return c
+        return ""
+
+    c_id = pick(["wine_id", "id_vinho", "id", "vinho_id"])
+    c_nome = pick(["wine_name", "nome_vinho", "vinho", "nome"])
+    c_price = pick(["price", "preco", "preço", "valor"])
+    c_stock = pick(["estoque", "stock", "qtd", "quantidade"])
+    c_active = pick(["active", "ativo", "status"])
+    c_type = pick(["tipo", "cor", "estilo", "wine_type", "type", "categoria", "tipo_vinho_padrao"])
+    c_profile = pick(["perfil_vinho", "style", "perfil"])
+    c_country = pick(["country", "pais"])
+    c_region = pick(["region", "regiao"])
+
+    out = pd.DataFrame()
+    out["id_vinho"] = df[c_id] if c_id else ""
+    out["nome_vinho"] = df[c_nome] if c_nome else ""
+    out["preco_num"] = df[c_price].apply(to_float) if c_price else None
+    out["estoque"] = df[c_stock].apply(lambda x: to_int(x, 0)) if c_stock else 0
+    out["ativo"] = df[c_active].apply(lambda x: 1 if norm_text(x).lower() in ["1", "1.0", "true", "sim"] else 0) if c_active else 0
+    out["tipo_vinho"] = df[c_type] if c_type else ""
+    out["perfil_vinho"] = df[c_profile] if c_profile else ""
+    out["region"] = df[c_region] if c_region else ""
+    out["country"] = df[c_country] if c_country else ""
+
+    out["id_vinho"] = out["id_vinho"].apply(norm_text)
+    out["nome_vinho"] = out["nome_vinho"].apply(clean_display_text)
+    out["tipo_vinho"] = out["tipo_vinho"].apply(_normalize_wine_type)
+    out["perfil_vinho"] = out["perfil_vinho"].apply(clean_display_text)
+    out["region"] = out["region"].apply(clean_display_text)
+    out["country"] = out["country"].apply(clean_display_text)
+
+    m = out["id_vinho"].eq("")
+    out.loc[m, "id_vinho"] = out.loc[m, "nome_vinho"]
+    return out[out["nome_vinho"] != ""].drop_duplicates(subset=["id_vinho", "nome_vinho"])
+
+
+def standardize_pairings(pair_df: pd.DataFrame) -> pd.DataFrame:
+    p = pair_df.copy()
+    defaults = {
+        "tipo_pairing": "",
+        "chave_pratos": "",
+        "ids_pratos": "",
+        "nomes_pratos": "",
+        "id_vinho": "",
+        "nome_vinho": "",
+        "rotulo_valor": "",
+        "tipo_vinho": "",
+        "perfil_vinho": "",
+        "score_harmonizacao": "",
+        "estrategia_harmonizacao": "",
+        "papel_do_vinho": "",
+        "nivel_confianca": "",
+        "estrutura_match": "",
+        "acidez_match": "",
+        "tanino_match": "",
+        "ponte_aromatica": "",
+        "risco_sensorial": "",
+        "diversidade_penalidade": "",
+        "contador_uso_vinho": "",
+        "motivo_score": "",
+        "perfil_custo_beneficio": "",
+        "selo_harmonizacao": "",
+        "a_melhor_para": "",
+        "frase_mesa": "",
+        "por_que_carne": "",
+        "por_que_queijo": "",
+        "por_que_combo": "",
+        "por_que_vale": "",
+        "ordem_recomendacao": "",
+    }
+    for c, default in defaults.items():
+        if c not in p.columns:
+            p[c] = default
+
+    if "ativo" in p.columns:
+        p["ativo"] = p["ativo"].apply(lambda x: 1 if norm_text(x).lower() in ["1", "1.0", "true", "sim"] else 0)
+    else:
+        p["ativo"] = 1
+
+    for c in p.columns:
+        if p[c].dtype == object:
+            p[c] = p[c].apply(clean_display_text)
+
+    p["score_ord"] = safe_numeric_series(p["score_harmonizacao"]).fillna(0)
+    p["ordem_ord"] = safe_numeric_series(p["ordem_recomendacao"]).fillna(999)
+
+    return p[p["ativo"] == 1].copy()
+
+
+def load_all_data() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    menu_url = _get_secret("MENU_SHEET_URL", "")
+    wines_url = _get_secret("WINES_SHEET_URL", "")
+    pairings_url = _get_secret("PAIRINGS_SHEET_URL", "")
+
+    if not menu_url:
+        raise ValueError("MENU_SHEET_URL não configurado.")
+    if not wines_url:
+        raise ValueError("WINES_SHEET_URL não configurado.")
+    if not pairings_url:
+        raise ValueError("PAIRINGS_SHEET_URL não configurado.")
+
+    menu_df = normalize_cols(load_csv_from_url(menu_url, "MENU"))
+    wines_df = normalize_cols(load_csv_from_url(wines_url, "WINES"))
+    pair_df = normalize_cols(load_csv_from_url(pairings_url, "PAIRINGS"))
+
+    return menu_df, wines_df, pair_df
 
 
 def _row_single_match(row: pd.Series, prato_id: str, prato_nome: str) -> bool:

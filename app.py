@@ -99,7 +99,9 @@ def to_float(x) -> Optional[float]:
 
 def safe_numeric_series(series: pd.Series) -> pd.Series:
     return pd.to_numeric(
-        series.astype(str).str.replace(",", ".", regex=False).str.extract(r"(-?\d+(?:\.\d+)?)", expand=False),
+        series.astype(str)
+        .str.replace(",", ".", regex=False)
+        .str.extract(r"(-?\d+(?:\.\d+)?)", expand=False),
         errors="coerce",
     )
 
@@ -147,9 +149,7 @@ def _candidate_sheet_csv_urls(url: str) -> List[str]:
         raise ValueError("URL vazia.")
 
     if "googleusercontent.com" in u:
-        raise ValueError(
-            "Use o link original da planilha em docs.google.com/spreadsheets, e não um link temporário googleusercontent."
-        )
+        raise ValueError("Use o link original da planilha do Google Sheets, não o link temporário googleusercontent.")
 
     if "docs.google.com/spreadsheets" not in u:
         raise ValueError(f"URL inválida para Google Sheets: {u}")
@@ -219,19 +219,13 @@ def load_csv_from_url(url: str, source_name: str = "SHEET") -> pd.DataFrame:
             csv_text = _decode_csv_bytes(r.content)
 
             if not csv_text.strip():
-                last_error = ValueError(
-                    f"[{source_name}] tentativa {idx}: retorno vazio.\nURL: {export_url}"
-                )
+                last_error = ValueError(f"[{source_name}] tentativa {idx}: retorno vazio.\nURL: {export_url}")
                 continue
 
             content_type = r.headers.get("Content-Type", "").lower()
             stripped = csv_text.lstrip().lower()
 
-            if (
-                "text/html" in content_type
-                or stripped.startswith("<!doctype html")
-                or stripped.startswith("<html")
-            ):
+            if "text/html" in content_type or stripped.startswith("<!doctype html") or stripped.startswith("<html"):
                 last_error = ValueError(
                     f"[{source_name}] tentativa {idx}: o Google retornou HTML em vez de CSV.\nURL: {export_url}"
                 )
@@ -240,19 +234,13 @@ def load_csv_from_url(url: str, source_name: str = "SHEET") -> pd.DataFrame:
             return pd.read_csv(io.StringIO(csv_text), dtype=str, keep_default_na=False)
 
         except requests.HTTPError as e:
-            last_error = ValueError(
-                f"[{source_name}] tentativa {idx} falhou.\nURL: {export_url}\nErro: {e}"
-            )
+            last_error = ValueError(f"[{source_name}] tentativa {idx} falhou.\nURL: {export_url}\nErro: {e}")
             continue
         except requests.RequestException as e:
-            last_error = ValueError(
-                f"[{source_name}] tentativa {idx} falhou.\nURL: {export_url}\nErro: {e}"
-            )
+            last_error = ValueError(f"[{source_name}] tentativa {idx} falhou.\nURL: {export_url}\nErro: {e}")
             continue
         except Exception as e:
-            last_error = ValueError(
-                f"[{source_name}] tentativa {idx} falhou.\nURL: {export_url}\nErro: {e}"
-            )
+            last_error = ValueError(f"[{source_name}] tentativa {idx} falhou.\nURL: {export_url}\nErro: {e}")
             continue
 
     raise last_error if last_error else ValueError(f"[{source_name}] Falha ao carregar planilha.")
@@ -266,16 +254,17 @@ def normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def make_key_for_pratos(prato_ids: List[str]) -> str:
-    return "|".join(sorted([norm_text(x) for x in prato_ids if norm_text(x)]))
-
-
 def split_multi_value_tokens(s: str) -> List[str]:
     raw = norm_text(s)
     if not raw:
         return []
     parts = re.split(r"[|,;/+]+", raw)
     return [norm_text(p) for p in parts if norm_text(p)]
+
+
+def make_key_for_pratos(prato_ids: List[str]) -> str:
+    vals = [norm_text(x) for x in prato_ids if norm_text(x)]
+    return "|".join(sorted(vals))
 
 
 def is_wine_available_now(w: Dict) -> bool:
@@ -646,7 +635,7 @@ def ensure_connected_summary(row: Dict, dish_title: str) -> str:
     prato = summarize_combo_title(dish_title)
     combo = clean_display_text(row.get("por_que_combo", ""))
 
-    if frase and nome_vinho.lower() in frase.lower() and prato.lower() in frase.lower():
+    if frase and nome_vinho.lower() in frase.lower():
         return frase
 
     combo_sentence = combo.split(". ")[0].strip() if combo else ""
@@ -654,14 +643,10 @@ def ensure_connected_summary(row: Dict, dish_title: str) -> str:
         text = combo_sentence
         if nome_vinho.lower() not in text.lower():
             text = f"{nome_vinho} acompanha {prato} porque {text[:1].lower() + text[1:] if len(text) > 1 else text.lower()}"
-        elif prato.lower() not in text.lower():
-            text = f"{text} em {prato}"
         return text.rstrip(".") + "."
 
     if nome_vinho and prato:
-        if is_combo_context(dish_title):
-            return f"{nome_vinho} acompanha {prato} porque foi escolhido para sustentar os dois elementos principais da combinação com leitura clara no paladar."
-        return f"{nome_vinho} acompanha {prato} porque entrega estrutura e leitura clara no paladar."
+        return f"{nome_vinho} acompanha {prato} porque entrega uma leitura coerente da harmonização."
 
     return frase or combo or "-"
 
@@ -705,8 +690,6 @@ def build_reason_text(row: Dict, title: str) -> str:
         base = score_reason.rstrip(".")
         if nome_vinho.lower() not in base.lower():
             return f"{nome_vinho} foi recomendado para {prato} porque {base[:1].lower() + base[1:] if len(base) > 1 else base.lower()}."
-        if prato.lower() not in base.lower():
-            return f"{base} em {prato}."
         return base + "."
 
     parts = []
@@ -982,10 +965,9 @@ def load_all_data() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     return menu_df, wines_df, pair_df
 
 
-def _row_single_match(row: pd.Series, prato_id: str, prato_nome: str) -> bool:
-    target_id = norm_text(prato_id)
-    target_key = make_key_for_pratos([target_id])
-    target_name = norm_match_text(prato_nome)
+def _row_matches_single(row: pd.Series, prato_id: str, prato_nome: str) -> bool:
+    pid = norm_text(prato_id)
+    nome = norm_match_text(prato_nome)
 
     row_key = norm_text(row.get("chave_pratos", ""))
     row_ids = [norm_text(x) for x in split_multi_value_tokens(row.get("ids_pratos", ""))]
@@ -995,25 +977,24 @@ def _row_single_match(row: pd.Series, prato_id: str, prato_nome: str) -> bool:
     if row_tipo in {"combo", "dupla", "combinacao", "combinação"}:
         return False
 
+    cond_id = False
     if row_ids:
-        if len(row_ids) != 1:
-            return False
-        if row_ids[0] != target_id:
-            return False
+        cond_id = pid in row_ids
     elif row_key:
-        if row_key != target_key:
-            return False
+        cond_id = row_key == pid
+    else:
+        cond_id = True
 
+    cond_name = False
     if row_names:
-        if "|" in row_names or " + " in row_names:
-            return False
-        if target_name not in row_names and row_names not in target_name:
-            return False
+        cond_name = nome in row_names or row_names in nome
+    else:
+        cond_name = True
 
-    return True
+    return cond_id and cond_name
 
 
-def _row_combo_match(row: pd.Series, prato_ids: List[str], prato_nomes: List[str]) -> bool:
+def _row_matches_combo(row: pd.Series, prato_ids: List[str], prato_nomes: List[str]) -> bool:
     target_ids = sorted([norm_text(x) for x in prato_ids if norm_text(x)])
     target_key = make_key_for_pratos(target_ids)
     target_names = [norm_match_text(x) for x in prato_nomes]
@@ -1022,19 +1003,21 @@ def _row_combo_match(row: pd.Series, prato_ids: List[str], prato_nomes: List[str
     row_ids = sorted([norm_text(x) for x in split_multi_value_tokens(row.get("ids_pratos", "")) if norm_text(x)])
     row_names = norm_match_text(row.get("nomes_pratos", ""))
 
+    cond_id = False
     if row_ids:
-        if row_ids != target_ids:
-            return False
+        cond_id = row_ids == target_ids
     elif row_key:
-        if row_key != target_key:
-            return False
+        cond_id = row_key == target_key
+    else:
+        cond_id = False
 
+    cond_name = False
     if row_names:
-        ok = all(n and n in row_names for n in target_names)
-        if not ok:
-            return False
+        cond_name = all(n in row_names for n in target_names if n)
+    else:
+        cond_name = True
 
-    return True
+    return cond_id and cond_name
 
 
 def filter_pairings_for_single(
@@ -1045,7 +1028,7 @@ def filter_pairings_for_single(
 ) -> pd.DataFrame:
     p = pairings.copy()
     p = p[p["id_vinho"].isin(available_ids)].copy()
-    p = p[p.apply(lambda row: _row_single_match(row, prato_id, prato_nome), axis=1)].copy()
+    p = p[p.apply(lambda row: _row_matches_single(row, prato_id, prato_nome), axis=1)].copy()
     return p
 
 
@@ -1057,7 +1040,7 @@ def filter_pairings_for_combo(
 ) -> pd.DataFrame:
     p = pairings.copy()
     p = p[p["id_vinho"].isin(available_ids)].copy()
-    p = p[p.apply(lambda row: _row_combo_match(row, prato_ids, prato_nomes), axis=1)].copy()
+    p = p[p.apply(lambda row: _row_matches_combo(row, prato_ids, prato_nomes), axis=1)].copy()
     return p
 
 

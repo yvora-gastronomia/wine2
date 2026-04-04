@@ -232,23 +232,17 @@ def load_csv_from_url(url: str, source_name: str = "SHEET") -> pd.DataFrame:
 
         except requests.HTTPError as e:
             last_error = ValueError(
-                f"[{source_name}] tentativa {idx} falhou.\n"
-                f"URL: {export_url}\n"
-                f"Erro: {e}"
+                f"[{source_name}] tentativa {idx} falhou.\nURL: {export_url}\nErro: {e}"
             )
             continue
         except requests.RequestException as e:
             last_error = ValueError(
-                f"[{source_name}] tentativa {idx} falhou.\n"
-                f"URL: {export_url}\n"
-                f"Erro: {e}"
+                f"[{source_name}] tentativa {idx} falhou.\nURL: {export_url}\nErro: {e}"
             )
             continue
         except Exception as e:
             last_error = ValueError(
-                f"[{source_name}] tentativa {idx} falhou.\n"
-                f"URL: {export_url}\n"
-                f"Erro: {e}"
+                f"[{source_name}] tentativa {idx} falhou.\nURL: {export_url}\nErro: {e}"
             )
             continue
 
@@ -960,9 +954,9 @@ def load_all_data() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     if not pairings_url:
         raise ValueError("PAIRINGS_SHEET_URL não configurado.")
 
-    menu_df = normalize_cols(load_csv_from_url(menu_url))
-    wines_df = normalize_cols(load_csv_from_url(wines_url))
-    pair_df = normalize_cols(load_csv_from_url(pairings_url))
+    menu_df = normalize_cols(load_csv_from_url(menu_url, "MENU"))
+    wines_df = normalize_cols(load_csv_from_url(wines_url, "WINES"))
+    pair_df = normalize_cols(load_csv_from_url(pairings_url, "PAIRINGS"))
     return menu_df, wines_df, pair_df
 
 
@@ -986,6 +980,270 @@ def sort_pairings_subset(p_subset: pd.DataFrame) -> pd.DataFrame:
     p_subset = p_subset.copy()
 
     if "ordem_ord" not in p_subset.columns:
-        p_subset["ordem_ord"] = safe_numeric_series(p_subset.get("ordem_recomendacao", pd.Series([], dtype=str))).fillna(999)
+        p_subset["ordem_ord"] = safe_numeric_series(
+            p_subset.get("ordem_recomendacao", pd.Series([], dtype=str))
+        ).fillna(999)
     if "score_ord" not in p_subset.columns:
-        p_subset["score_ord"] = safe_numeric_series(p_subset.get("score_harmonizacao", pd.Series([], dtype=str))).fillna(0)
+        p_subset["score_ord"] = safe_numeric_series(
+            p_subset.get("score_harmonizacao", pd.Series([], dtype=str))
+        ).fillna(0)
+
+    has_explicit_order = (p_subset["ordem_ord"] < 999).any()
+
+    if has_explicit_order:
+        p_subset = p_subset.sort_values(
+            ["ordem_ord", "score_ord", "nome_vinho"],
+            ascending=[True, False, True],
+            kind="mergesort",
+        )
+    else:
+        p_subset = p_subset.sort_values(
+            ["score_ord", "nome_vinho"],
+            ascending=[False, True],
+            kind="mergesort",
+        )
+
+    return p_subset.head(2)
+
+
+def render_recos_block(
+    title: str,
+    p_subset: pd.DataFrame,
+    wines_type_map: Dict[str, str],
+    wines_meta_map: Dict[str, Dict[str, str]],
+):
+    st.markdown("<div class='yvora-card'>", unsafe_allow_html=True)
+    st.markdown(f"<div class='yvora-card-title'>{title}</div>", unsafe_allow_html=True)
+
+    if is_combo_context(title):
+        combo_short = summarize_combo_title(title)
+        sub = f"Sugestões para a combinação {combo_short}, com leitura dos dois elementos principais."
+    else:
+        sub = "Sugestões organizadas para decisão rápida, com estratégia e leitura sensorial do prato."
+    st.markdown(f"<div class='yvora-card-sub'>{sub}</div>", unsafe_allow_html=True)
+
+    p_subset = sort_pairings_subset(p_subset)
+
+    for idx, (_, row) in enumerate(p_subset.iterrows()):
+        nome_vinho = clean_display_text(row.get("nome_vinho", ""))
+        id_vinho = clean_display_text(row.get("id_vinho", ""))
+        wine_type = clean_display_text(row.get("tipo_vinho", "")) or clean_display_text(wines_type_map.get(id_vinho, ""))
+        option_label = "1ª opção" if idx == 0 else "2ª opção"
+        meta = wines_meta_map.get(id_vinho, {})
+        origem_wine = " • ".join(
+            [x for x in [clean_display_text(meta.get("country", "")), clean_display_text(meta.get("region", ""))] if x]
+        )
+
+        st.markdown(f"### {nome_vinho}")
+        if origem_wine:
+            st.markdown(f"<div class='yvora-mini'>{origem_wine}</div>", unsafe_allow_html=True)
+
+        render_signal_grid(row, option_label)
+        render_icon_row(row, wine_type)
+
+        resumo = ensure_connected_summary(row, title)
+        st.markdown(f"<div class='yvora-quote'>💬 {resumo}</div>", unsafe_allow_html=True)
+
+        render_visual_profile(row)
+
+        role = clean_display_text(row.get("papel_do_vinho", ""))
+        score_reason = build_reason_text(row, title)
+
+        context_parts = []
+        if role:
+            context_parts.append(f"<b>Papel do vinho:</b> {role}")
+        if score_reason:
+            context_parts.append(f"<b>Leitura técnica:</b> {score_reason}")
+
+        if context_parts:
+            st.markdown(f"<div class='yvora-context'>{'<br>'.join(context_parts)}</div>", unsafe_allow_html=True)
+
+        l1, l2, l3 = build_summary_lines(row, title)
+        st.markdown(
+            f"""
+            <div class="yvora-summary">
+              <div class="yvora-line">🥩 <span>{l1}</span></div>
+              <div class="yvora-line">🧀 <span>{l2}</span></div>
+              <div class="yvora-line">🧠 <span>{l3}</span></div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        with st.expander("Ver leitura completa"):
+            colA, colB = st.columns(2)
+            with colA:
+                st.markdown("**Carne**")
+                st.write(clean_display_text(row.get("por_que_carne", "")) or "-")
+                st.markdown("**Queijo**")
+                st.write(clean_display_text(row.get("por_que_queijo", "")) or "-")
+            with colB:
+                st.markdown("**Conjunto**")
+                st.write(clean_display_text(row.get("por_que_combo", "")) or "-")
+                st.markdown("**Valor da escolha**")
+                st.write(clean_display_text(row.get("por_que_vale", "")) or "-")
+
+        st.divider()
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_client(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFrame):
+    st.markdown("<div class='yvora-section-head'>Escolha seus pratos</div>", unsafe_allow_html=True)
+    st.markdown(
+        "<div class='yvora-muted'>Selecione 1 ou 2 pratos. O app mostra apenas vinhos com estoque disponível.</div>",
+        unsafe_allow_html=True,
+    )
+
+    selected_names = st.multiselect(
+        "Selecione 1 ou 2 pratos",
+        options=menu["nome_prato"].tolist(),
+        max_selections=2,
+        placeholder="Digite para buscar no menu",
+    )
+
+    if not selected_names:
+        st.info("Selecione ao menos 1 prato para ver as sugestões.")
+        return
+
+    selected = menu[menu["nome_prato"].isin(selected_names)].copy()
+    selected_ids = selected["id_prato"].tolist()
+    selected_titles = selected["nome_prato"].tolist()
+
+    wines_dict = wines.to_dict(orient="records")
+    available_ids = {w["id_vinho"] for w in wines_dict if is_wine_available_now(w)}
+    wines_type_map = {norm_text(w["id_vinho"]): norm_text(w.get("tipo_vinho", "")) for w in wines_dict}
+    wines_meta_map = {
+        norm_text(w["id_vinho"]): {
+            "perfil_vinho": norm_text(w.get("perfil_vinho", "")),
+            "region": norm_text(w.get("region", "")),
+            "country": norm_text(w.get("country", "")),
+        }
+        for w in wines_dict
+    }
+
+    if len(selected_ids) == 2:
+        key_pair = make_key_for_pratos(selected_ids)
+        p_pair = pairings[pairings["chave_pratos"].astype(str).str.strip() == key_pair].copy()
+        p_pair = p_pair[p_pair["id_vinho"].isin(available_ids)].copy()
+
+        combo_title = " | ".join(selected_titles)
+
+        if p_pair.empty:
+            st.markdown(
+                "<div class='yvora-warn'><b>Sem recomendação para a combinação agora.</b><br>Esta combinação ainda não foi gerada ou os vinhos sugeridos estão sem estoque.</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            render_recos_block(combo_title, p_pair, wines_type_map, wines_meta_map)
+
+        st.write("")
+
+    st.markdown("<div class='yvora-section-head'>Melhor por prato</div>", unsafe_allow_html=True)
+    for pid in selected_ids:
+        key_single = make_key_for_pratos([pid])
+        p_one = pairings[pairings["chave_pratos"].astype(str).str.strip() == key_single].copy()
+        p_one = p_one[p_one["id_vinho"].isin(available_ids)].copy()
+
+        prato_nome = menu[menu["id_prato"] == pid]["nome_prato"].iloc[0]
+
+        if p_one.empty:
+            st.markdown(
+                f"<div class='yvora-warn'><b>{prato_nome}:</b> sem sugestão disponível agora.</div>",
+                unsafe_allow_html=True,
+            )
+            continue
+
+        render_recos_block(prato_nome, p_one, wines_type_map, wines_meta_map)
+
+
+def render_dm(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFrame):
+    st.markdown("<div class='yvora-section-head'>Diagnóstico DM</div>", unsafe_allow_html=True)
+    st.markdown(
+        "<div class='yvora-muted'>Leitura rápida da base carregada e dos campos técnicos disponíveis.</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.write(f"Menu hash: `{sheet_hash(menu)}`")
+    st.write(f"Vinhos hash: `{sheet_hash(wines)}`")
+    st.write(f"Pairings hash: `{sheet_hash(pairings)}`")
+
+    wines_dict = wines.to_dict(orient="records")
+    available_ids = {w["id_vinho"] for w in wines_dict if is_wine_available_now(w)}
+    st.write(f"Vinhos disponíveis agora: **{len(available_ids)}**")
+    st.write(f"Linhas de pairings ativas: **{len(pairings)}**")
+
+    st.markdown("### Verificação de ordenação")
+    debug_cols = [
+        "chave_pratos",
+        "id_vinho",
+        "nome_vinho",
+        "ordem_recomendacao",
+        "score_harmonizacao",
+        "score_ord",
+        "ativo",
+    ]
+    for c in debug_cols:
+        if c not in pairings.columns:
+            pairings[c] = ""
+
+    st.dataframe(
+        pairings[debug_cols].sort_values(["chave_pratos", "score_ord"], ascending=[True, False]),
+        use_container_width=True,
+    )
+
+
+def dm_login_block() -> bool:
+    admin_password = _get_secret("ADMIN_PASSWORD", "")
+    if "dm" not in st.session_state:
+        st.session_state.dm = False
+
+    with st.sidebar:
+        st.markdown("### Acesso DM")
+        if st.session_state.dm:
+            st.success("Modo DM ativo")
+            if st.button("Sair do DM", use_container_width=True):
+                st.session_state.dm = False
+                st.rerun()
+        else:
+            pwd = st.text_input("Senha", type="password", placeholder="Digite a senha do DM")
+            if st.button("Entrar", use_container_width=True):
+                if pwd and admin_password and pwd == admin_password:
+                    st.session_state.dm = True
+                    st.rerun()
+                else:
+                    st.error("Senha inválida.")
+    return bool(st.session_state.dm)
+
+
+def main():
+    set_page_style()
+    sidebar_brand()
+
+    st.markdown("<div class='yvora-shell'>", unsafe_allow_html=True)
+    header_area()
+
+    try:
+        dm = dm_login_block()
+
+        menu_df, wines_df, pair_df = load_all_data()
+        menu = standardize_menu(menu_df)
+        wines = standardize_wines(wines_df)
+        pairings = standardize_pairings(pair_df)
+
+        if dm:
+            render_dm(menu, wines, pairings)
+        else:
+            render_client(menu, wines, pairings)
+
+    except Exception as e:
+        st.markdown(
+            f"<div class='yvora-warn'><b>Erro ao carregar dados:</b><br>{str(e)}</div>",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+if __name__ == "__main__":
+    main()

@@ -3,8 +3,8 @@ import io
 import re
 import unicodedata
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
-from urllib.parse import parse_qs, urlencode, urlparse
+from typing import Dict, List, Optional, Set, Tuple
+from urllib.parse import parse_qs, urlparse
 
 import pandas as pd
 import requests
@@ -72,7 +72,7 @@ def norm_match_text(s: str) -> str:
     s = clean_display_text(s).lower()
     s = unicodedata.normalize("NFD", s)
     s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
-    s = re.sub(r"[^a-z0-9\s|+/,-]", " ", s)
+    s = re.sub(r"[^a-z0-9\s|+/,&-]", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
@@ -141,25 +141,29 @@ def _extract_sheet_id_and_gid(url: str) -> Tuple[str, str]:
     return "", gid
 
 
-def _to_gsheet_csv_export_url(url: str) -> str:
+def _candidate_sheet_csv_urls(url: str) -> List[str]:
     u = norm_text(url).replace("\n", "").strip()
     if not u:
-        return ""
+        raise ValueError("URL vazia.")
 
     if "googleusercontent.com" in u:
         raise ValueError(
-            "Use o link original da planilha do Google Sheets em docs.google.com/spreadsheets, e não um link temporário googleusercontent."
+            "Use o link original da planilha em docs.google.com/spreadsheets, e não um link temporário googleusercontent."
         )
 
-    if "docs.google.com/spreadsheets" in u:
-        sheet_id, gid = _extract_sheet_id_and_gid(u)
-        if not sheet_id:
-            raise ValueError("Não foi possível identificar o ID da planilha.")
-        return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?" + urlencode(
-            {"format": "csv", "gid": gid or "0"}
-        )
+    if "docs.google.com/spreadsheets" not in u:
+        raise ValueError(f"URL inválida para Google Sheets: {u}")
 
-    return u
+    sheet_id, gid = _extract_sheet_id_and_gid(u)
+    if not sheet_id:
+        raise ValueError("Não foi possível identificar o ID da planilha.")
+
+    gid = gid or "0"
+
+    return [
+        f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&gid={gid}",
+        f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}",
+    ]
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -197,41 +201,61 @@ def sidebar_brand():
 
 
 @st.cache_data(ttl=45)
-def load_csv_from_url(url: str) -> pd.DataFrame:
-    export_url = _to_gsheet_csv_export_url(url)
-    if not export_url:
-        raise ValueError("URL vazia.")
+def load_csv_from_url(url: str, source_name: str = "SHEET") -> pd.DataFrame:
+    candidate_urls = _candidate_sheet_csv_urls(url)
 
     headers = {
         "User-Agent": "Mozilla/5.0",
         "Accept": "text/csv,application/csv,text/plain,*/*",
     }
 
-    try:
-        r = requests.get(export_url, headers=headers, timeout=30)
-        r.raise_for_status()
-    except requests.HTTPError as e:
-        raise ValueError(
-            "Falha ao baixar CSV do Google Sheets.\n\n"
-            "Verifique:\n"
-            "1) A planilha está compartilhada como 'Anyone with the link can view'.\n"
-            "2) O link aponta para a aba correta (gid correto).\n"
-            "3) Use o link normal do Sheets (edit#gid=...) que o app converte automaticamente.\n\n"
-            f"Detalhe técnico: {e}"
-        )
+    last_error = None
 
-    csv_text = _decode_csv_bytes(r.content)
+    for idx, export_url in enumerate(candidate_urls, start=1):
+        try:
+            r = requests.get(export_url, headers=headers, timeout=30)
+            r.raise_for_status()
 
-    if not csv_text.strip():
-        raise ValueError("A planilha retornou vazia.")
+            csv_text = _decode_csv_bytes(r.content)
 
-    content_type = r.headers.get("Content-Type", "").lower()
-    if "text/html" in content_type or csv_text.lstrip().lower().startswith("<!doctype html") or csv_text.lstrip().lower().startswith("<html"):
-        raise ValueError(
-            "O Google não retornou CSV. Verifique se a planilha está compartilhada corretamente e se o gid está apontando para a aba certa."
-        )
+            if not csv_text.strip():
+                last_error = ValueError(
+                    f"[{source_name}] tentativa {idx}: retorno vazio.\nURL: {export_url}"
+                )
+                continue
 
-    return pd.read_csv(io.StringIO(csv_text), dtype=str, keep_default_na=False)
+            content_type = r.headers.get("Content-Type", "").lower()
+            stripped = csv_text.lstrip().lower()
+
+            if (
+                "text/html" in content_type
+                or stripped.startswith("<!doctype html")
+                or stripped.startswith("<html")
+            ):
+                last_error = ValueError(
+                    f"[{source_name}] tentativa {idx}: o Google retornou HTML em vez de CSV.\nURL: {export_url}"
+                )
+                continue
+
+            return pd.read_csv(io.StringIO(csv_text), dtype=str, keep_default_na=False)
+
+        except requests.HTTPError as e:
+            last_error = ValueError(
+                f"[{source_name}] tentativa {idx} falhou.\nURL: {export_url}\nErro: {e}"
+            )
+            continue
+        except requests.RequestException as e:
+            last_error = ValueError(
+                f"[{source_name}] tentativa {idx} falhou.\nURL: {export_url}\nErro: {e}"
+            )
+            continue
+        except Exception as e:
+            last_error = ValueError(
+                f"[{source_name}] tentativa {idx} falhou.\nURL: {export_url}\nErro: {e}"
+            )
+            continue
+
+    raise last_error if last_error else ValueError(f"[{source_name}] Falha ao carregar planilha.")
 
 
 def normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
@@ -361,6 +385,7 @@ def set_page_style():
         padding: 14px 16px;
         border: 1px solid rgba(14,42,71,0.08);
         color: {BRAND_BLUE};
+        white-space: pre-wrap;
     }}
 
     .yvora-chip {{
@@ -552,42 +577,27 @@ def render_star_string(n: int) -> str:
     return "★" * n + "☆" * (5 - n)
 
 
-def render_signal_grid(row: Dict, option_label: str):
-    stars_n = score_to_stars(row.get("score_harmonizacao", ""))
-    stars = render_star_string(stars_n)
-    strategy = clean_display_text(row.get("estrategia_harmonizacao", ""))
-    role = clean_display_text(row.get("papel_do_vinho", ""))
-
-    c1, c2 = st.columns(2)
-    with c1:
-        _signal_box(f"✨ {option_label}", stars, "Score Match")
-    with c2:
-        _signal_box("Estratégia", strategy or "Não informada", "Como o vinho entra")
-
-    c3, _ = st.columns([1, 1])
-    with c3:
-        _signal_box("Papel do vinho", role or "Não informado", "O que ele faz")
-
-
 def summarize_single_title(title: str) -> str:
     t = clean_display_text(title)
     tl = t.lower()
 
     mapping = [
         ("steak tartare com fonduta quattro formaggi", "steak tartare"),
-        ("tartare de atum com burrata, parmesão e pistache tostado", "tartare de atum"),
-        ("tartare de atum fresco com chèvre cremoso e azeite cítrico", "tartare de atum"),
+        ("tartare de atum com burrata e parmesao", "tartare de atum"),
+        ("tartare de atum com burrata, parmesao e pistache tostado", "tartare de atum"),
+        ("tartare de atum fresco com chevre cremoso e azeite citrico", "tartare de atum"),
         ("croquetta de parma", "croquetta de parma"),
         ("parma italiano com creme de gorgonzola dolce", "parma"),
         ("roast beef rosado com creme aerado de gorgonzola", "roast beef"),
-        ("espetinho de cupim de longa cocção com tortillas e provolone defumado", "cupim"),
-        ("nuvem da fazenda atalaia em crosta com filé mignon", "nuvem atalaia com filé mignon"),
-        ("tutano assado com tartare de filé mignon e gruyère ralado", "tutano com tartare"),
+        ("espetinho de cupim de longa coccao com tortilhas e provolone defumado", "cupim"),
+        ("nuvem da fazenda atalaia em crosta com file mignon", "nuvem atalaia com file mignon"),
+        ("tutano assado com tartare de file mignon e queijo tulha ralado", "tutano com tartare"),
         ("carpaccio bovino", "carpaccio bovino"),
     ]
 
+    tl_norm = norm_match_text(tl)
     for k, v in mapping:
-        if k in tl:
+        if norm_match_text(k) in tl_norm:
             return v
 
     return t
@@ -614,7 +624,24 @@ def is_combo_context(title: str) -> bool:
     return "|" in t or " + " in t.lower()
 
 
-def _row_key_tokens(row: Dict) -> set:
+def render_signal_grid(row: Dict, option_label: str):
+    stars_n = score_to_stars(row.get("score_harmonizacao", ""))
+    stars = render_star_string(stars_n)
+    strategy = clean_display_text(row.get("estrategia_harmonizacao", ""))
+    role = clean_display_text(row.get("papel_do_vinho", ""))
+
+    c1, c2 = st.columns(2)
+    with c1:
+        _signal_box(f"✨ {option_label}", stars, "Score Match")
+    with c2:
+        _signal_box("Estratégia", strategy or "Não informada", "Como o vinho entra")
+
+    c3, _ = st.columns([1, 1])
+    with c3:
+        _signal_box("Papel do vinho", role or "Não informado", "O que ele faz")
+
+
+def _row_key_tokens(row: Dict) -> Set[str]:
     vals = []
     vals.extend(split_multi_value_tokens(row.get("chave_pratos", "")))
     vals.extend(split_multi_value_tokens(row.get("ids_pratos", "")))
@@ -622,21 +649,40 @@ def _row_key_tokens(row: Dict) -> set:
     return set(vals)
 
 
+def _row_type_normalized(row: Dict) -> str:
+    raw = norm_match_text(row.get("tipo_pairing", ""))
+    if raw in {"prato", "single", "individual", "item"}:
+        return "single"
+    if raw in {"combo", "combinacao", "combinacao de pratos", "dupla", "pair"}:
+        return "combo"
+
+    ids_set = _row_key_tokens(row)
+    nomes = norm_text(row.get("nomes_pratos", ""))
+    if len(ids_set) > 1:
+        return "combo"
+    if "|" in nomes or " + " in nomes:
+        return "combo"
+    if len(ids_set) == 1:
+        return "single"
+    return ""
+
+
 def _row_name_matches_single(row: Dict, prato_nome: str) -> bool:
     row_name = norm_match_text(row.get("nomes_pratos", ""))
-    target = norm_match_text(prato_nome)
+    target_full = norm_match_text(prato_nome)
     target_short = norm_match_text(summarize_single_title(prato_nome))
 
     if not row_name:
         return True
 
-    if row_name == target:
+    if "|" in row_name or " + " in row_name:
+        return False
+
+    if row_name == target_full:
         return True
-    if target and target in row_name:
+    if target_full and target_full in row_name:
         return True
-    if row_name and row_name in target:
-        return True
-    if target_short and target_short in row_name:
+    if target_short and target_short == row_name:
         return True
 
     return False
@@ -647,56 +693,134 @@ def _row_name_matches_combo(row: Dict, prato_nomes: List[str]) -> bool:
     if not row_name:
         return True
 
-    targets = [norm_match_text(n) for n in prato_nomes]
+    targets_full = [norm_match_text(n) for n in prato_nomes]
     targets_short = [norm_match_text(summarize_single_title(n)) for n in prato_nomes]
 
-    ok_full = all(t and t in row_name for t in targets)
+    ok_full = all(t and t in row_name for t in targets_full)
     ok_short = all(t and t in row_name for t in targets_short)
 
     return ok_full or ok_short
 
 
-def filter_pairings_for_single(pairings: pd.DataFrame, prato_id: str, prato_nome: str, available_ids: set) -> pd.DataFrame:
+def _build_menu_full_name_index(menu: pd.DataFrame) -> List[str]:
+    out = []
+    for n in menu["nome_prato"].dropna().astype(str).tolist():
+        nm = norm_match_text(n)
+        if len(nm) >= 10:
+            out.append(nm)
+    return list(dict.fromkeys(out))
+
+
+def _row_mentions_other_menu_dish(
+    row: Dict,
+    selected_menu_names_norm: Set[str],
+    all_menu_names_norm: List[str],
+) -> bool:
+    text_parts = [
+        row.get("nomes_pratos", ""),
+        row.get("frase_mesa", ""),
+        row.get("por_que_carne", ""),
+        row.get("por_que_queijo", ""),
+        row.get("por_que_combo", ""),
+        row.get("por_que_vale", ""),
+        row.get("motivo_score", ""),
+        row.get("papel_do_vinho", ""),
+        row.get("estrategia_harmonizacao", ""),
+    ]
+    blob = " ".join(norm_match_text(t) for t in text_parts if norm_text(t))
+
+    if not blob:
+        return False
+
+    for menu_name in all_menu_names_norm:
+        if menu_name in selected_menu_names_norm:
+            continue
+        if menu_name in blob:
+            return True
+    return False
+
+
+def filter_pairings_for_single(
+    pairings: pd.DataFrame,
+    prato_id: str,
+    prato_nome: str,
+    available_ids: Set[str],
+    all_menu_names_norm: List[str],
+) -> pd.DataFrame:
     target_id = norm_text(prato_id)
     target_key = make_key_for_pratos([target_id])
+    selected_names_norm = {norm_match_text(prato_nome)}
 
     p = pairings.copy()
     p = p[p["id_vinho"].isin(available_ids)].copy()
 
     def row_ok(row) -> bool:
-        key_tokens = _row_key_tokens(row)
-        key_match = (
-            norm_text(row.get("chave_pratos", "")) == target_key
-            or target_id in key_tokens
-        )
-        name_match = _row_name_matches_single(row, prato_nome)
-        return key_match and name_match
+        row_type = _row_type_normalized(row)
+        if row_type == "combo":
+            return False
 
-    strict = p[p.apply(row_ok, axis=1)].copy()
-    return strict
+        row_key = norm_text(row.get("chave_pratos", ""))
+        row_ids_set = _row_key_tokens(row)
+
+        key_or_id_match = False
+        if row_key and row_key == target_key:
+            key_or_id_match = True
+        if row_ids_set and row_ids_set == {target_id}:
+            key_or_id_match = True
+        if not key_or_id_match:
+            return False
+
+        if not _row_name_matches_single(row, prato_nome):
+            return False
+
+        if _row_mentions_other_menu_dish(row, selected_names_norm, all_menu_names_norm):
+            return False
+
+        return True
+
+    return p[p.apply(row_ok, axis=1)].copy()
 
 
-def filter_pairings_for_combo(pairings: pd.DataFrame, prato_ids: List[str], prato_nomes: List[str], available_ids: set) -> pd.DataFrame:
+def filter_pairings_for_combo(
+    pairings: pd.DataFrame,
+    prato_ids: List[str],
+    prato_nomes: List[str],
+    available_ids: Set[str],
+    all_menu_names_norm: List[str],
+) -> pd.DataFrame:
     ids_norm = [norm_text(x) for x in prato_ids if norm_text(x)]
     target_key = make_key_for_pratos(ids_norm)
     target_ids_set = set(ids_norm)
+    selected_names_norm = {norm_match_text(n) for n in prato_nomes}
 
     p = pairings.copy()
     p = p[p["id_vinho"].isin(available_ids)].copy()
 
     def row_ok(row) -> bool:
+        row_type = _row_type_normalized(row)
+        if row_type == "single":
+            return False
+
         row_key = norm_text(row.get("chave_pratos", ""))
-        key_tokens = _row_key_tokens(row)
+        row_ids_set = _row_key_tokens(row)
 
-        key_match = (
-            row_key == target_key
-            or target_ids_set.issubset(key_tokens)
-        )
-        name_match = _row_name_matches_combo(row, prato_nomes)
-        return key_match and name_match
+        key_or_id_match = False
+        if row_key and row_key == target_key:
+            key_or_id_match = True
+        if row_ids_set and row_ids_set == target_ids_set:
+            key_or_id_match = True
+        if not key_or_id_match:
+            return False
 
-    strict = p[p.apply(row_ok, axis=1)].copy()
-    return strict
+        if not _row_name_matches_combo(row, prato_nomes):
+            return False
+
+        if _row_mentions_other_menu_dish(row, selected_names_norm, all_menu_names_norm):
+            return False
+
+        return True
+
+    return p[p.apply(row_ok, axis=1)].copy()
 
 
 def ensure_connected_summary(row: Dict, dish_title: str) -> str:
@@ -972,6 +1096,7 @@ def standardize_wines(wines_df: pd.DataFrame) -> pd.DataFrame:
 def standardize_pairings(pair_df: pd.DataFrame) -> pd.DataFrame:
     p = pair_df.copy()
     defaults = {
+        "tipo_pairing": "",
         "chave_pratos": "",
         "ids_pratos": "",
         "nomes_pratos": "",
@@ -1033,9 +1158,9 @@ def load_all_data() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     if not pairings_url:
         raise ValueError("PAIRINGS_SHEET_URL não configurado.")
 
-    menu_df = normalize_cols(load_csv_from_url(menu_url))
-    wines_df = normalize_cols(load_csv_from_url(wines_url))
-    pair_df = normalize_cols(load_csv_from_url(pairings_url))
+    menu_df = normalize_cols(load_csv_from_url(menu_url, "MENU"))
+    wines_df = normalize_cols(load_csv_from_url(wines_url, "WINES"))
+    pair_df = normalize_cols(load_csv_from_url(pairings_url, "PAIRINGS"))
     return menu_df, wines_df, pair_df
 
 
@@ -1168,6 +1293,8 @@ def render_recos_block(
 
 
 def render_client(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFrame):
+    all_menu_names_norm = _build_menu_full_name_index(menu)
+
     st.markdown("<div class='yvora-section-head'>Escolha seus pratos</div>", unsafe_allow_html=True)
     st.markdown(
         "<div class='yvora-muted'>Selecione 1 ou 2 pratos. O app mostra apenas vinhos com estoque disponível.</div>",
@@ -1202,12 +1329,18 @@ def render_client(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFram
     }
 
     if len(selected_ids) == 2:
-        p_pair = filter_pairings_for_combo(pairings, selected_ids, selected_titles, available_ids)
+        p_pair = filter_pairings_for_combo(
+            pairings,
+            selected_ids,
+            selected_titles,
+            available_ids,
+            all_menu_names_norm,
+        )
         combo_title = " | ".join(selected_titles)
 
         if p_pair.empty:
             st.markdown(
-                "<div class='yvora-warn'><b>Sem recomendação para a combinação agora.</b><br>Esta combinação ainda não foi gerada ou os vinhos sugeridos estão sem estoque, ou a linha da base está inconsistente.</div>",
+                "<div class='yvora-warn'><b>Sem recomendação para a combinação agora.</b><br>Esta combinação ainda não foi gerada, os vinhos sugeridos estão sem estoque, ou a linha da base está inconsistente.</div>",
                 unsafe_allow_html=True,
             )
         else:
@@ -1218,7 +1351,13 @@ def render_client(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFram
     st.markdown("<div class='yvora-section-head'>Melhor por prato</div>", unsafe_allow_html=True)
     for pid in selected_ids:
         prato_nome = menu[menu["id_prato"] == pid]["nome_prato"].iloc[0]
-        p_one = filter_pairings_for_single(pairings, pid, prato_nome, available_ids)
+        p_one = filter_pairings_for_single(
+            pairings,
+            pid,
+            prato_nome,
+            available_ids,
+            all_menu_names_norm,
+        )
 
         if p_one.empty:
             st.markdown(
@@ -1248,6 +1387,7 @@ def render_dm(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFrame):
 
     st.markdown("### Verificação de ordenação")
     debug_cols = [
+        "tipo_pairing",
         "chave_pratos",
         "ids_pratos",
         "nomes_pratos",

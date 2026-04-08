@@ -24,19 +24,7 @@ POSSIBLE_LOGOS = [
     BASE_DIR / "yvora_logo.png",
     BASE_DIR / "assets" / "yvora_logo.png",
 ]
-
-
-def _find_logo_path() -> Path:
-    for p in POSSIBLE_LOGOS:
-        try:
-            if p.exists():
-                return p
-        except Exception:
-            continue
-    return POSSIBLE_LOGOS[0]
-
-
-LOGO_LOCAL_PATH = _find_logo_path()
+LOGO_LOCAL_PATH = next((p for p in POSSIBLE_LOGOS if p.exists()), POSSIBLE_LOGOS[0])
 
 
 def _get_secret(key: str, default: str = "") -> str:
@@ -118,8 +106,8 @@ def _extract_sheet_id_and_gid(url: str) -> Tuple[str, str]:
         return "", "0"
 
     parsed = urlparse(u)
-
     gid = "0"
+
     if parsed.fragment:
         frag_qs = parse_qs(parsed.fragment)
         gid = (frag_qs.get("gid", [gid]) or [gid])[0] or gid
@@ -158,29 +146,8 @@ def _candidate_sheet_csv_urls(url: str) -> List[str]:
     ]
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_asset_bytes(local_path: Path, fallback_url: str = "") -> Optional[bytes]:
-    try:
-        if local_path.exists():
-            return local_path.read_bytes()
-    except Exception:
-        pass
-
-    fb = norm_text(fallback_url)
-    if fb:
-        try:
-            r = requests.get(fb, timeout=30)
-            r.raise_for_status()
-            return r.content
-        except Exception:
-            return None
-    return None
-
-
-@st.cache_data(ttl=60, show_spinner=False)
 def load_csv_from_url(url: str, source_name: str = "SHEET") -> pd.DataFrame:
     candidate_urls = _candidate_sheet_csv_urls(url)
-
     headers = {
         "User-Agent": "Mozilla/5.0",
         "Accept": "text/csv,application/csv,text/plain,*/*",
@@ -218,11 +185,23 @@ def load_csv_from_url(url: str, source_name: str = "SHEET") -> pd.DataFrame:
 
 def render_logo(width: Optional[int] = None, use_container_width: bool = False):
     logo_url = _get_secret("LOGO_URL", "")
-    b = get_asset_bytes(LOGO_LOCAL_PATH, logo_url)
-    if b:
-        st.image(b, width=width, use_container_width=use_container_width)
-    else:
-        st.caption("Logo não encontrada. Inclua em assets/ ou configure LOGO_URL em secrets.")
+    try:
+        if LOGO_LOCAL_PATH.exists():
+            st.image(str(LOGO_LOCAL_PATH), width=width, use_container_width=use_container_width)
+            return
+    except Exception:
+        pass
+
+    if logo_url:
+        try:
+            r = requests.get(logo_url, timeout=20)
+            r.raise_for_status()
+            st.image(r.content, width=width, use_container_width=use_container_width)
+            return
+        except Exception:
+            pass
+
+    st.caption("Logo não encontrada.")
 
 
 def sidebar_brand():
@@ -259,11 +238,6 @@ def set_page_style():
         padding-bottom: 2rem;
     }}
 
-    h1, h2, h3, h4 {{
-        color: {BRAND_BLUE};
-        letter-spacing: -0.02em;
-    }}
-
     .yvora-shell {{
         max-width: 1240px;
         margin: 0 auto;
@@ -283,7 +257,6 @@ def set_page_style():
         font-size: 2.15rem;
         font-weight: 800;
         margin: 0;
-        letter-spacing: -0.03em;
     }}
 
     .yvora-subtitle {{
@@ -430,45 +403,6 @@ def set_page_style():
     st.markdown(css, unsafe_allow_html=True)
 
 
-def _signal_box(label: str, value: str, sub: str):
-    st.markdown(
-        f"""
-        <div class="yvora-signal-box">
-          <div class="yvora-signal-label">{label}</div>
-          <div class="yvora-signal-value">{value}</div>
-          <div class="yvora-signal-sub">{sub}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def score_to_stars(score_raw: str) -> int:
-    score = to_int(score_raw, 0)
-    if score >= 90:
-        return 5
-    if score >= 80:
-        return 4
-    if score >= 70:
-        return 3
-    if score >= 60:
-        return 2
-    return 1
-
-
-def render_star_string(n: int) -> str:
-    n = max(1, min(5, n))
-    return "★" * n + "☆" * (5 - n)
-
-
-def split_combo_names(s: str) -> List[str]:
-    raw = clean_display_text(s)
-    if not raw:
-        return []
-    parts = re.split(r"\s+\+\s+|\|", raw)
-    return [clean_display_text(p) for p in parts if clean_display_text(p)]
-
-
 def pairings_from_csv(pair_df: pd.DataFrame) -> pd.DataFrame:
     p = pair_df.copy()
     p.columns = [str(c).strip().lower() for c in p.columns]
@@ -505,15 +439,13 @@ def pairings_from_csv(pair_df: pd.DataFrame) -> pd.DataFrame:
 
     p["tipo_pairing"] = p["tipo_pairing"].str.lower().str.strip()
 
-    if "ativo" in p.columns:
-        p["ativo_num"] = p["ativo"].apply(
-            lambda x: 1 if norm_text(x).lower() in ["1", "1.0", "true", "sim"] else 0
-        )
-        # Se a coluna existir mas vier toda vazia ou inválida, não derruba a base
-        if p["ativo_num"].sum() > 0:
+    # Só filtra ativo se a coluna realmente trouxer valores válidos.
+    raw_ativo = p["ativo"].astype(str).str.strip().str.lower()
+    valid_ativo_mask = raw_ativo.isin(["1", "1.0", "true", "sim", "0", "0.0", "false", "nao", "não"])
+    if valid_ativo_mask.any():
+        p["ativo_num"] = raw_ativo.apply(lambda x: 1 if x in ["1", "1.0", "true", "sim"] else 0)
+        if (p["ativo_num"] == 1).any():
             p = p[p["ativo_num"] == 1].copy()
-        else:
-            p["ativo_num"] = 1
     else:
         p["ativo_num"] = 1
 
@@ -525,6 +457,9 @@ def pairings_from_csv(pair_df: pd.DataFrame) -> pd.DataFrame:
 
     p["score_ord"] = safe_numeric_series(p["score_harmonizacao"]).fillna(0)
     p["ordem_ord"] = safe_numeric_series(p["ordem_recomendacao"]).fillna(999)
+
+    # Remove linhas realmente vazias de prato
+    p = p[p["nomes_pratos"].astype(str).str.strip() != ""].copy()
 
     return p
 
@@ -560,24 +495,35 @@ def wines_from_csv(wines_df: pd.DataFrame) -> pd.DataFrame:
     return out[out["nome_vinho"] != ""].drop_duplicates(subset=["id_vinho", "nome_vinho"])
 
 
-def sort_pairings_subset(p_subset: pd.DataFrame) -> pd.DataFrame:
-    p_subset = p_subset.copy()
-    has_explicit_order = (p_subset["ordem_ord"] < 999).any()
+def score_to_stars(score_raw: str) -> int:
+    score = to_int(score_raw, 0)
+    if score >= 90:
+        return 5
+    if score >= 80:
+        return 4
+    if score >= 70:
+        return 3
+    if score >= 60:
+        return 2
+    return 1
 
-    if has_explicit_order:
-        p_subset = p_subset.sort_values(
-            ["ordem_ord", "score_ord", "nome_vinho"],
-            ascending=[True, False, True],
-            kind="mergesort",
-        )
-    else:
-        p_subset = p_subset.sort_values(
-            ["score_ord", "nome_vinho"],
-            ascending=[False, True],
-            kind="mergesort",
-        )
 
-    return p_subset.head(2)
+def render_star_string(n: int) -> str:
+    n = max(1, min(5, n))
+    return "★" * n + "☆" * (5 - n)
+
+
+def _signal_box(label: str, value: str, sub: str):
+    st.markdown(
+        f"""
+        <div class="yvora-signal-box">
+          <div class="yvora-signal-label">{label}</div>
+          <div class="yvora-signal-value">{value}</div>
+          <div class="yvora-signal-sub">{sub}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def render_signal_grid(row: Dict, option_label: str):
@@ -635,6 +581,26 @@ def render_exact_text_block(row: Dict):
             st.write(por_que_combo or "-")
             st.markdown("**Valor da escolha**")
             st.write(por_que_vale or "-")
+
+
+def sort_pairings_subset(p_subset: pd.DataFrame) -> pd.DataFrame:
+    p_subset = p_subset.copy()
+    has_explicit_order = (p_subset["ordem_ord"] < 999).any()
+
+    if has_explicit_order:
+        p_subset = p_subset.sort_values(
+            ["ordem_ord", "score_ord", "nome_vinho"],
+            ascending=[True, False, True],
+            kind="mergesort",
+        )
+    else:
+        p_subset = p_subset.sort_values(
+            ["score_ord", "nome_vinho"],
+            ascending=[False, True],
+            kind="mergesort",
+        )
+
+    return p_subset.head(2)
 
 
 def render_recos_block(title: str, p_subset: pd.DataFrame, wines_meta_map: Dict[str, Dict[str, str]]):
@@ -720,21 +686,9 @@ def render_client(pairings: pd.DataFrame, wines: pd.DataFrame):
 
     if not single_dishes:
         st.markdown(
-            "<div class='yvora-warn'><b>Nenhum prato foi encontrado no arquivo de pairings.</b><br>Revise as colunas tipo_pairing, nomes_pratos e ativo na exportação da planilha.</div>",
+            "<div class='yvora-warn'><b>Nenhum prato foi encontrado no arquivo de pairings.</b><br>Revise a exportação da planilha.</div>",
             unsafe_allow_html=True,
         )
-        return
-
-    selected_names = st.multiselect(
-        "Selecione 1 ou 2 pratos",
-        options=single_dishes,
-        max_selections=2,
-        placeholder="Digite para buscar no menu",
-        key="selected_pratos",
-    )
-
-    if len(selected_names) == 0:
-        st.info("Selecione ao menos 1 prato para ver as sugestões.")
         return
 
     wines_meta_map = {}
@@ -748,6 +702,19 @@ def render_client(pairings: pd.DataFrame, wines: pd.DataFrame):
             }
             for _, row in wines.iterrows()
         }
+
+    selected_names = st.multiselect(
+        "Selecione 1 ou 2 pratos",
+        options=single_dishes,
+        default=st.session_state.get("selected_pratos", []),
+        max_selections=2,
+        placeholder="Digite para buscar no menu",
+        key="selected_pratos",
+    )
+
+    if len(selected_names) == 0:
+        st.info("Selecione ao menos 1 prato para ver as sugestões.")
+        return
 
     if len(selected_names) == 1:
         dish = clean_display_text(selected_names[0])
@@ -805,7 +772,19 @@ def render_client(pairings: pd.DataFrame, wines: pd.DataFrame):
 
 def render_dm(pairings: pd.DataFrame):
     st.markdown("<div class='yvora-section-head'>Diagnóstico DM</div>", unsafe_allow_html=True)
-    st.write(f"Linhas ativas no pairings: **{len(pairings)}**")
+
+    pratos_unicos = (
+        pairings[pairings["tipo_pairing"] == "prato"]["nomes_pratos"]
+        .dropna()
+        .astype(str)
+        .map(clean_display_text)
+        .tolist()
+    )
+    pratos_unicos = sorted(set([x for x in pratos_unicos if x]))
+
+    st.write(f"Linhas carregadas: **{len(pairings)}**")
+    st.write(f"Pratos únicos encontrados: **{len(pratos_unicos)}**")
+    st.write(pratos_unicos[:20])
 
     debug_cols = [
         "tipo_pairing",

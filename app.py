@@ -496,6 +496,24 @@ def wines_from_csv(wines_df: pd.DataFrame) -> pd.DataFrame:
     return out[out["nome_vinho"] != ""].drop_duplicates(subset=["id_vinho", "nome_vinho"])
 
 
+def derive_all_dishes(pairings: pd.DataFrame) -> List[str]:
+    single_from_prato = (
+        pairings[pairings["tipo_pairing"] == "prato"]["nomes_pratos"]
+        .dropna()
+        .astype(str)
+        .map(clean_display_text)
+        .tolist()
+    )
+
+    combo_items: List[str] = []
+    combo_rows = pairings[pairings["tipo_pairing"] == "combo"]["nomes_pratos"].dropna().astype(str).tolist()
+    for combo_name in combo_rows:
+        combo_items.extend(split_combo_names(combo_name))
+
+    all_dishes = sorted(set([x for x in (single_from_prato + combo_items) if clean_display_text(x)]))
+    return all_dishes
+
+
 def score_to_stars(score_raw: str) -> int:
     score = to_int(score_raw, 0)
     if score >= 90:
@@ -668,19 +686,9 @@ def header_area():
 def render_client(pairings: pd.DataFrame, wines: pd.DataFrame):
     st.markdown("<div class='yvora-section-head'>Escolha seus pratos</div>", unsafe_allow_html=True)
 
-    prato_rows = pairings[pairings["tipo_pairing"] == "prato"].copy()
-    single_dishes = sorted(
-        set(
-            prato_rows["nomes_pratos"]
-            .dropna()
-            .astype(str)
-            .map(clean_display_text)
-            .tolist()
-        )
-    )
-    single_dishes = [x for x in single_dishes if x]
+    all_dishes = derive_all_dishes(pairings)
 
-    if not single_dishes:
+    if not all_dishes:
         st.markdown(
             "<div class='yvora-warn'><b>Nenhum prato foi encontrado no arquivo de pairings.</b><br>Revise a aba usada em PAIRINGS_SHEET_URL.</div>",
             unsafe_allow_html=True,
@@ -701,7 +709,7 @@ def render_client(pairings: pd.DataFrame, wines: pd.DataFrame):
 
     selected_names = st.multiselect(
         "Selecione 1 ou 2 pratos",
-        options=single_dishes,
+        options=all_dishes,
         max_selections=2,
         placeholder="Digite para buscar no menu",
         key="selected_pratos",
@@ -723,10 +731,17 @@ def render_client(pairings: pd.DataFrame, wines: pd.DataFrame):
         ].copy()
 
         if p_one.empty:
-            st.markdown(
-                f"<div class='yvora-warn'><b>{dish}:</b> não existe linha exata no arquivo de pairings.</div>",
-                unsafe_allow_html=True,
-            )
+            exists_in_combo = any(normalize_for_key(dish) in row_key.split("|") for row_key in pairings["combo_names_key"].fillna("").tolist())
+            if exists_in_combo:
+                st.markdown(
+                    f"<div class='yvora-warn'><b>{dish}:</b> o prato existe nas combinações da base, mas não há linha individual de <i>prato</i> exportada no pairings atual.</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    f"<div class='yvora-warn'><b>{dish}:</b> não existe linha exata no arquivo de pairings.</div>",
+                    unsafe_allow_html=True,
+                )
             return
 
         render_recos_block(dish, p_one, wines_meta_map)
@@ -757,10 +772,17 @@ def render_client(pairings: pd.DataFrame, wines: pd.DataFrame):
         ].copy()
 
         if p_one.empty:
-            st.markdown(
-                f"<div class='yvora-warn'><b>{dish}:</b> não existe linha exata no arquivo de pairings.</div>",
-                unsafe_allow_html=True,
-            )
+            exists_in_combo = any(normalize_for_key(dish) in row_key.split("|") for row_key in pairings["combo_names_key"].fillna("").tolist())
+            if exists_in_combo:
+                st.markdown(
+                    f"<div class='yvora-warn'><b>{dish}:</b> o prato existe nas combinações da base, mas não há linha individual de <i>prato</i> exportada no pairings atual.</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    f"<div class='yvora-warn'><b>{dish}:</b> não existe linha exata no arquivo de pairings.</div>",
+                    unsafe_allow_html=True,
+                )
         else:
             render_recos_block(dish, p_one, wines_meta_map)
 
@@ -768,7 +790,7 @@ def render_client(pairings: pd.DataFrame, wines: pd.DataFrame):
 def render_dm(pairings: pd.DataFrame):
     st.markdown("<div class='yvora-section-head'>Diagnóstico DM</div>", unsafe_allow_html=True)
 
-    pratos_unicos = sorted(
+    pratos_prato = sorted(
         set(
             pairings[pairings["tipo_pairing"] == "prato"]["nomes_pratos"]
             .dropna()
@@ -777,14 +799,18 @@ def render_dm(pairings: pd.DataFrame):
             .tolist()
         )
     )
-    pratos_unicos = [x for x in pratos_unicos if x]
+    pratos_prato = [x for x in pratos_prato if x]
+
+    pratos_totais = derive_all_dishes(pairings)
 
     st.write(f"Linhas carregadas: **{len(pairings)}**")
-    st.write(f"Pratos únicos encontrados: **{len(pratos_unicos)}**")
-    st.write(pratos_unicos[:50])
+    st.write(f"Pratos únicos em linhas 'prato': **{len(pratos_prato)}**")
+    st.write(f"Pratos únicos totais, incluindo combos: **{len(pratos_totais)}**")
+    st.write("Primeiros pratos encontrados:")
+    st.write(pratos_totais[:50])
 
-    if len(pratos_unicos) <= 1:
-        st.warning("A exportação atual está trazendo apenas 1 prato único. Revise filtros ou a aba/gid usada em PAIRINGS_SHEET_URL.")
+    if len(pratos_prato) <= 1 and len(pratos_totais) > 1:
+        st.warning("A exportação atual tem poucos registros em tipo_pairing = prato. Os demais pratos estão chegando apenas nas linhas de combo.")
 
     debug_cols = [
         "tipo_pairing",

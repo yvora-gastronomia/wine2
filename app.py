@@ -283,6 +283,54 @@ def is_wine_available_now(w: Dict) -> bool:
     return to_int(w.get("ativo", w.get("active", 0)), 0) == 1 and to_int(w.get("estoque", 0), 0) > 0
 
 
+def _split_pairing_names(raw: str) -> List[str]:
+    """
+    Divide nomes_pratos em itens do conjunto.
+    Para combo, prioriza separadores explícitos.
+    Para item único, retorna lista com 1 item.
+    """
+    text = clean_display_text(raw)
+    if not text:
+        return []
+
+    if "|" in text:
+        parts = text.split("|")
+    elif re.search(r"\s\+\s", text):
+        parts = re.split(r"\s\+\s", text)
+    elif ";" in text:
+        parts = text.split(";")
+    else:
+        parts = [text]
+
+    return [clean_display_text(p) for p in parts if clean_display_text(p)]
+
+
+def _normalized_name_list(raw: str) -> List[str]:
+    return [normalize_for_match(x) for x in _split_pairing_names(raw) if normalize_for_match(x)]
+
+
+def _make_normalized_name_key(names: List[str]) -> str:
+    vals = [normalize_for_match(x) for x in names if normalize_for_match(x)]
+    return "|".join(sorted(vals))
+
+
+def _row_dish_count_from_fields(row: pd.Series) -> int:
+    row_ids = [norm_text(x) for x in row.get("ids_pratos_list", []) if norm_text(x)]
+    if row_ids:
+        return len(row_ids)
+
+    row_name_tokens = row.get("nomes_pratos_list_norm", [])
+    if row_name_tokens:
+        return len(row_name_tokens)
+
+    return 0
+
+
+def _is_combo_tipo(row_tipo: str) -> bool:
+    t = normalize_for_match(row_tipo)
+    return t in {"combo", "dupla", "combinacao", "combinação"}
+
+
 def set_page_style():
     st.set_page_config(
         page_title=APP_TITLE,
@@ -957,8 +1005,13 @@ def standardize_pairings(pair_df: pd.DataFrame) -> pd.DataFrame:
     p["score_ord"] = safe_numeric_series(p["score_harmonizacao"]).fillna(0)
     p["ordem_ord"] = safe_numeric_series(p["ordem_recomendacao"]).fillna(999)
 
-    p["nomes_pratos_match"] = p["nomes_pratos"].apply(normalize_for_match)
     p["ids_pratos_list"] = p["ids_pratos"].apply(split_multi_value_tokens)
+    p["ids_pratos_key"] = p["ids_pratos_list"].apply(make_key_for_pratos)
+
+    p["nomes_pratos_list_norm"] = p["nomes_pratos"].apply(_normalized_name_list)
+    p["nomes_pratos_key"] = p["nomes_pratos_list_norm"].apply(lambda xs: "|".join(sorted(xs)))
+
+    p["dish_count"] = p.apply(_row_dish_count_from_fields, axis=1)
 
     return p[p["ativo"] == 1].copy()
 
@@ -982,55 +1035,46 @@ def load_all_data() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     return menu_df, wines_df, pair_df
 
 
-def _string_contains_selected_dish(row_names_norm: str, selected_name_norm: str) -> bool:
-    if not row_names_norm or not selected_name_norm:
-        return False
-
-    if selected_name_norm in row_names_norm:
-        return True
-
-    selected_words = [w for w in selected_name_norm.split() if len(w) >= 4]
-    if not selected_words:
-        return False
-
-    hits = sum(1 for w in selected_words if w in row_names_norm)
-    return hits >= max(2, min(3, len(selected_words)))
-
-
 def _row_matches_single(row: pd.Series, prato_id: str, prato_nome: str) -> bool:
     pid = norm_text(prato_id)
-    nome_norm = normalize_for_match(prato_nome)
-
-    row_names_norm = row.get("nomes_pratos_match", "")
-    row_ids = row.get("ids_pratos_list", [])
+    nome_key = _make_normalized_name_key([prato_nome])
     row_tipo = normalize_for_match(row.get("tipo_pairing", ""))
+    row_count = int(row.get("dish_count", 0) or 0)
 
-    if row_tipo in {"combo", "dupla", "combinacao", "combinação"}:
+    if _is_combo_tipo(row_tipo):
         return False
 
-    name_match = _string_contains_selected_dish(row_names_norm, nome_norm)
-    id_match = pid in row_ids if row_ids else False
+    if row_count and row_count != 1:
+        return False
 
-    if row_names_norm:
-        return name_match
+    row_ids_key = norm_text(row.get("ids_pratos_key", ""))
+    if pid and row_ids_key:
+        return row_ids_key == pid
 
-    if row_ids:
-        return id_match
+    row_names_key = norm_text(row.get("nomes_pratos_key", ""))
+    if nome_key and row_names_key:
+        return row_names_key == nome_key
 
     return False
 
 
 def _row_matches_combo(row: pd.Series, prato_ids: List[str], prato_nomes: List[str]) -> bool:
-    row_names_norm = row.get("nomes_pratos_match", "")
-    row_ids = sorted([norm_text(x) for x in row.get("ids_pratos_list", []) if norm_text(x)])
+    target_ids_key = make_key_for_pratos(prato_ids)
+    target_names_key = _make_normalized_name_key(prato_nomes)
+    row_count = int(row.get("dish_count", 0) or 0)
 
-    target_ids = sorted([norm_text(x) for x in prato_ids if norm_text(x)])
-    target_names = [normalize_for_match(x) for x in prato_nomes]
+    if row_count and row_count != len([x for x in prato_ids if norm_text(x)]):
+        return False
 
-    names_match = row_names_norm and all(_string_contains_selected_dish(row_names_norm, n) for n in target_names)
-    ids_match = bool(row_ids) and row_ids == target_ids
+    row_ids_key = norm_text(row.get("ids_pratos_key", ""))
+    if target_ids_key and row_ids_key:
+        return row_ids_key == target_ids_key
 
-    return bool(names_match or ids_match)
+    row_names_key = norm_text(row.get("nomes_pratos_key", ""))
+    if target_names_key and row_names_key:
+        return row_names_key == target_names_key
+
+    return False
 
 
 def filter_pairings_for_single(
@@ -1267,7 +1311,10 @@ def render_dm(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFrame):
         "tipo_pairing",
         "chave_pratos",
         "ids_pratos",
+        "ids_pratos_key",
         "nomes_pratos",
+        "nomes_pratos_key",
+        "dish_count",
         "id_vinho",
         "nome_vinho",
         "ordem_recomendacao",

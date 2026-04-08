@@ -167,7 +167,6 @@ def load_csv_from_url(url: str, source_name: str = "SHEET") -> pd.DataFrame:
 
             content_type = r.headers.get("Content-Type", "").lower()
             stripped = csv_text.lstrip().lower()
-
             if "text/html" in content_type or stripped.startswith("<!doctype html") or stripped.startswith("<html"):
                 last_error = ValueError(
                     f"[{source_name}] tentativa {idx}: o Google retornou HTML em vez de CSV.\nURL: {export_url}"
@@ -403,6 +402,14 @@ def set_page_style():
     st.markdown(css, unsafe_allow_html=True)
 
 
+def split_combo_names(s: str) -> List[str]:
+    raw = clean_display_text(s)
+    if not raw:
+        return []
+    parts = re.split(r"\s+\+\s+|\|", raw)
+    return [clean_display_text(p) for p in parts if clean_display_text(p)]
+
+
 def pairings_from_csv(pair_df: pd.DataFrame) -> pd.DataFrame:
     p = pair_df.copy()
     p.columns = [str(c).strip().lower() for c in p.columns]
@@ -439,16 +446,19 @@ def pairings_from_csv(pair_df: pd.DataFrame) -> pd.DataFrame:
 
     p["tipo_pairing"] = p["tipo_pairing"].str.lower().str.strip()
 
-    # Só filtra ativo se a coluna realmente trouxer valores válidos.
     raw_ativo = p["ativo"].astype(str).str.strip().str.lower()
     valid_ativo_mask = raw_ativo.isin(["1", "1.0", "true", "sim", "0", "0.0", "false", "nao", "não"])
+
     if valid_ativo_mask.any():
         p["ativo_num"] = raw_ativo.apply(lambda x: 1 if x in ["1", "1.0", "true", "sim"] else 0)
         if (p["ativo_num"] == 1).any():
             p = p[p["ativo_num"] == 1].copy()
+        else:
+            p["ativo_num"] = 1
     else:
         p["ativo_num"] = 1
 
+    p = p[p["nomes_pratos"].astype(str).str.strip() != ""].copy()
     p["nomes_pratos_key"] = p["nomes_pratos"].apply(normalize_for_key)
     p["combo_names_list"] = p["nomes_pratos"].apply(split_combo_names)
     p["combo_names_key"] = p["combo_names_list"].apply(
@@ -457,9 +467,6 @@ def pairings_from_csv(pair_df: pd.DataFrame) -> pd.DataFrame:
 
     p["score_ord"] = safe_numeric_series(p["score_harmonizacao"]).fillna(0)
     p["ordem_ord"] = safe_numeric_series(p["ordem_recomendacao"]).fillna(999)
-
-    # Remove linhas realmente vazias de prato
-    p = p[p["nomes_pratos"].astype(str).str.strip() != ""].copy()
 
     return p
 
@@ -706,7 +713,6 @@ def render_client(pairings: pd.DataFrame, wines: pd.DataFrame):
     selected_names = st.multiselect(
         "Selecione 1 ou 2 pratos",
         options=single_dishes,
-        default=st.session_state.get("selected_pratos", []),
         max_selections=2,
         placeholder="Digite para buscar no menu",
         key="selected_pratos",

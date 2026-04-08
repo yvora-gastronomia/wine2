@@ -333,6 +333,132 @@ def _is_combo_tipo(raw: str) -> bool:
     return t in {"combo", "dupla", "combinacao", "combinação"}
 
 
+def _menu_name_variants(name: str) -> List[str]:
+    raw = clean_display_text(name)
+    norm = normalize_for_match(raw)
+
+    variants = {norm}
+
+    alias_map = {
+        "croquetta de parma": ["croqueta de parma", "croquetta", "croqueta", "parma"],
+        "roast beef rosado com creme aerado de gorgonzola": ["roast beef"],
+        "espetinho de cupim de longa coccao com tortillas e provolone defumado": [
+            "espetinho de cupim",
+            "cupim",
+            "provolone defumado",
+        ],
+        "espetinho de cupim de longa coccao com tortilhas e provolone defumado": [
+            "espetinho de cupim",
+            "cupim",
+            "provolone defumado",
+        ],
+        "parma italiano com creme de gorgonzola dolce": ["parma"],
+        "steak tartare com fonduta quattro formaggi": ["steak tartare", "tartare"],
+        "tartare de atum com burrata e parmesao": ["tartare de atum", "atum"],
+        "tartare de atum com burrata parmesao e pistache tostado": ["tartare de atum", "atum"],
+        "tartare de atum fresco com chevre cremoso e azeite citrico": ["tartare de atum", "atum"],
+        "nuvem da fazenda atalaia em crosta com file mignon": ["nuvem", "file mignon"],
+        "tutano assado com tartare de file mignon e queijo tulha ralado": ["tutano", "tartare de file mignon"],
+        "carpaccio bovino": ["carpaccio"],
+    }
+
+    if norm in alias_map:
+        for item in alias_map[norm]:
+            variants.add(normalize_for_match(item))
+
+    return [v for v in variants if v]
+
+
+def _build_menu_alias_index(menu: pd.DataFrame) -> Dict[str, str]:
+    alias_to_canonical: Dict[str, str] = {}
+    for name in menu["nome_prato"].dropna().tolist():
+        canonical = clean_display_text(name)
+        for alias in _menu_name_variants(canonical):
+            alias_to_canonical[alias] = canonical
+    return alias_to_canonical
+
+
+def _extract_mentioned_menu_items(text: str, alias_index: Dict[str, str]) -> List[str]:
+    t = normalize_for_match(text)
+    if not t:
+        return []
+
+    hits = set()
+    padded = f" {t} "
+
+    for alias_norm, canonical in alias_index.items():
+        if not alias_norm:
+            continue
+        token = f" {alias_norm} "
+        if token in padded:
+            hits.add(canonical)
+
+    return sorted(hits)
+
+
+def _row_text_payload(row: pd.Series) -> str:
+    fields = [
+        "frase_mesa",
+        "motivo_score",
+        "papel_do_vinho",
+        "por_que_carne",
+        "por_que_queijo",
+        "por_que_combo",
+        "por_que_vale",
+    ]
+    return " ".join(clean_display_text(row.get(f, "")) for f in fields).strip()
+
+
+def _row_is_textually_consistent(
+    row: pd.Series,
+    selected_titles: List[str],
+    alias_index: Dict[str, str],
+) -> bool:
+    payload = _row_text_payload(row)
+    if not payload:
+        return True
+
+    mentioned = _extract_mentioned_menu_items(payload, alias_index)
+    if not mentioned:
+        return True
+
+    selected_set = {clean_display_text(x) for x in selected_titles if clean_display_text(x)}
+    mentioned_set = {clean_display_text(x) for x in mentioned if clean_display_text(x)}
+
+    foreign = mentioned_set - selected_set
+    return len(foreign) == 0
+
+
+def _sanitize_text_by_selection(text: str, selected_titles: List[str], alias_index: Dict[str, str]) -> str:
+    txt = clean_display_text(text)
+    if not txt:
+        return ""
+
+    mentioned = _extract_mentioned_menu_items(txt, alias_index)
+    if not mentioned:
+        return txt
+
+    selected_set = {clean_display_text(x) for x in selected_titles if clean_display_text(x)}
+    foreign = [m for m in mentioned if clean_display_text(m) not in selected_set]
+
+    if foreign:
+        return ""
+
+    return txt
+
+
+def apply_text_consistency_filter(
+    p: pd.DataFrame,
+    selected_titles: List[str],
+    alias_index: Dict[str, str],
+) -> pd.DataFrame:
+    if p.empty:
+        return p
+
+    out = p[p.apply(lambda row: _row_is_textually_consistent(row, selected_titles, alias_index), axis=1)].copy()
+    return out
+
+
 def set_page_style():
     st.set_page_config(
         page_title=APP_TITLE,
@@ -1159,6 +1285,8 @@ def render_recos_block(
     p_subset: pd.DataFrame,
     wines_type_map: Dict[str, str],
     wines_meta_map: Dict[str, Dict[str, str]],
+    selected_titles: List[str],
+    alias_index: Dict[str, str],
 ):
     st.markdown("<div class='yvora-card'>", unsafe_allow_html=True)
     st.markdown(f"<div class='yvora-card-title'>{title}</div>", unsafe_allow_html=True)
@@ -1172,7 +1300,19 @@ def render_recos_block(
 
     p_subset = sort_pairings_subset(p_subset)
 
-    for idx, (_, row) in enumerate(p_subset.iterrows()):
+    for idx, (_, row_series) in enumerate(p_subset.iterrows()):
+        row = row_series.copy()
+
+        for field in [
+            "frase_mesa",
+            "motivo_score",
+            "por_que_carne",
+            "por_que_queijo",
+            "por_que_combo",
+            "por_que_vale",
+        ]:
+            row[field] = _sanitize_text_by_selection(row.get(field, ""), selected_titles, alias_index)
+
         nome_vinho = clean_display_text(row.get("nome_vinho", ""))
         id_vinho = clean_display_text(row.get("id_vinho", ""))
         wine_type = clean_display_text(row.get("tipo_vinho", "")) or clean_display_text(wines_type_map.get(id_vinho, ""))
@@ -1258,6 +1398,8 @@ def render_client(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFram
     selected_ids = selected["id_prato"].tolist()
     selected_titles = selected["nome_prato"].tolist()
 
+    alias_index = _build_menu_alias_index(menu)
+
     wines_dict = wines.to_dict(orient="records")
     available_ids = {w["id_vinho"] for w in wines_dict if is_wine_available_now(w)}
     wines_type_map = {norm_text(w["id_vinho"]): norm_text(w.get("tipo_vinho", "")) for w in wines_dict}
@@ -1272,21 +1414,30 @@ def render_client(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFram
 
     if len(selected_ids) == 2:
         p_pair = filter_pairings_for_combo(pairings, selected_ids, selected_titles, available_ids)
+        p_pair = apply_text_consistency_filter(p_pair, selected_titles, alias_index)
         combo_title = " | ".join(selected_titles)
 
         if p_pair.empty:
             st.markdown(
-                "<div class='yvora-warn'><b>Sem recomendação para a combinação agora.</b><br>Esta combinação ainda não foi gerada ou os vinhos sugeridos estão sem estoque.</div>",
+                "<div class='yvora-warn'><b>Sem recomendação para a combinação agora.</b><br>Esta combinação ainda não foi gerada, os vinhos sugeridos estão sem estoque, ou os textos da linha estão inconsistentes com a seleção.</div>",
                 unsafe_allow_html=True,
             )
         else:
-            render_recos_block(combo_title, p_pair, wines_type_map, wines_meta_map)
+            render_recos_block(
+                combo_title,
+                p_pair,
+                wines_type_map,
+                wines_meta_map,
+                selected_titles,
+                alias_index,
+            )
 
         st.write("")
 
     st.markdown("<div class='yvora-section-head'>Melhor por prato</div>", unsafe_allow_html=True)
     for pid, prato_nome in zip(selected_ids, selected_titles):
         p_one = filter_pairings_for_single(pairings, pid, prato_nome, available_ids)
+        p_one = apply_text_consistency_filter(p_one, [prato_nome], alias_index)
 
         if p_one.empty:
             st.markdown(
@@ -1295,7 +1446,14 @@ def render_client(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFram
             )
             continue
 
-        render_recos_block(prato_nome, p_one, wines_type_map, wines_meta_map)
+        render_recos_block(
+            prato_nome,
+            p_one,
+            wines_type_map,
+            wines_meta_map,
+            [prato_nome],
+            alias_index,
+        )
 
 
 def render_dm(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFrame):

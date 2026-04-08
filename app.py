@@ -53,7 +53,7 @@ def norm_text(x) -> str:
     except Exception:
         pass
     s = str(x)
-    s = s.replace("—", "-").replace("–", "-").replace("•", "-")
+    s = s.replace("–", "-").replace("•", "-")
     s = unicodedata.normalize("NFC", s)
     return s.strip()
 
@@ -235,7 +235,7 @@ def normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def split_multi_value_tokens(s: str) -> List[str]:
+def split_ids_tokens(s: str) -> List[str]:
     raw = norm_text(s)
     if not raw:
         return []
@@ -298,8 +298,7 @@ def set_page_style():
     css = f"""
     <style>
     .stApp {{
-        background:
-            linear-gradient(180deg, {BRAND_BG} 0%, #FBF8F3 100%);
+        background: linear-gradient(180deg, {BRAND_BG} 0%, #FBF8F3 100%);
     }}
 
     [data-testid="stSidebar"] {{
@@ -571,11 +570,11 @@ def standardize_menu(menu_df: pd.DataFrame) -> pd.DataFrame:
     out["descricao_prato"] = out["descricao_prato"].apply(clean_display_text)
     out["ativo"] = out["ativo"].apply(lambda x: 1 if norm_text(x).lower() in ["1", "1.0", "true", "sim"] else 0)
 
-    m = out["id_prato"].eq("")
-    out.loc[m, "id_prato"] = out.loc[m, "nome_prato"]
+    missing = out["id_prato"].eq("")
+    out.loc[missing, "id_prato"] = out.loc[missing, "nome_prato"]
 
     out = out[(out["nome_prato"] != "") & (out["ativo"] == 1)].copy()
-    out["nome_prato_key"] = out["nome_prato"].apply(normalize_for_key)
+    out["nome_key"] = out["nome_prato"].apply(normalize_for_key)
     return out.drop_duplicates(subset=["id_prato", "nome_prato"])
 
 
@@ -631,8 +630,8 @@ def standardize_wines(wines_df: pd.DataFrame) -> pd.DataFrame:
     out["region"] = out["region"].apply(clean_display_text)
     out["country"] = out["country"].apply(clean_display_text)
 
-    m = out["id_vinho"].eq("")
-    out.loc[m, "id_vinho"] = out.loc[m, "nome_vinho"]
+    missing = out["id_vinho"].eq("")
+    out.loc[missing, "id_vinho"] = out.loc[missing, "nome_vinho"]
 
     return out[out["nome_vinho"] != ""].drop_duplicates(subset=["id_vinho", "nome_vinho"])
 
@@ -681,12 +680,14 @@ def standardize_pairings(pair_df: pd.DataFrame) -> pd.DataFrame:
     else:
         p["ativo"] = 1
 
-    p["ids_pratos_list"] = p["ids_pratos"].apply(split_multi_value_tokens)
-    p["ids_key"] = p["ids_pratos_list"].apply(make_ids_key)
+    p["ids_list"] = p["ids_pratos"].apply(split_ids_tokens)
+    p["ids_key"] = p["ids_list"].apply(make_ids_key)
 
-    p["nomes_pratos_list"] = p["nomes_pratos"].apply(split_name_tokens)
-    p["names_key"] = p["nomes_pratos_list"].apply(make_names_key)
-    p["dish_count"] = p["nomes_pratos_list"].apply(len)
+    p["names_list"] = p["nomes_pratos"].apply(split_name_tokens)
+    p["names_key"] = p["names_list"].apply(make_names_key)
+
+    p["dish_count"] = p["ids_list"].apply(len)
+    p.loc[p["dish_count"] == 0, "dish_count"] = p["names_list"].apply(len)
 
     p["score_ord"] = safe_numeric_series(p["score_harmonizacao"]).fillna(0)
     p["ordem_ord"] = safe_numeric_series(p["ordem_recomendacao"]).fillna(999)
@@ -756,7 +757,6 @@ def filter_pairings_exact_combo(
 
 def sort_pairings_subset(p_subset: pd.DataFrame) -> pd.DataFrame:
     p_subset = p_subset.copy()
-
     has_explicit_order = (p_subset["ordem_ord"] < 999).any()
 
     if has_explicit_order:
@@ -891,7 +891,7 @@ def header_area():
 def render_client(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFrame):
     st.markdown("<div class='yvora-section-head'>Escolha seus pratos</div>", unsafe_allow_html=True)
     st.markdown(
-        "<div class='yvora-muted'>Consulta direta da base fixa.</div>",
+        "<div class='yvora-muted'>Consulta direta da base fixa por ID do prato.</div>",
         unsafe_allow_html=True,
     )
 

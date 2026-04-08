@@ -139,7 +139,6 @@ def _candidate_sheet_csv_urls(url: str) -> List[str]:
         raise ValueError("Não foi possível identificar o ID da planilha.")
 
     gid = gid or "0"
-
     return [
         f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&gid={gid}",
         f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}",
@@ -222,26 +221,21 @@ def set_page_style():
     .stApp {{
         background: linear-gradient(180deg, {BRAND_BG} 0%, #FBF8F3 100%);
     }}
-
     [data-testid="stSidebar"] {{
         background: linear-gradient(180deg, rgba(14,42,71,0.98) 0%, rgba(14,42,71,0.94) 100%);
         border-right: 1px solid rgba(255,255,255,0.08);
     }}
-
     [data-testid="stSidebar"] * {{
         color: {BRAND_WHITE};
     }}
-
     .block-container {{
         padding-top: 1.2rem;
         padding-bottom: 2rem;
     }}
-
     .yvora-shell {{
         max-width: 1240px;
         margin: 0 auto;
     }}
-
     .yvora-hero {{
         background: linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(245,239,231,0.95) 100%);
         border: 1px solid rgba(14,42,71,0.08);
@@ -250,14 +244,12 @@ def set_page_style():
         padding: 22px;
         margin-bottom: 18px;
     }}
-
     .yvora-title {{
         color: {BRAND_BLUE};
         font-size: 2.15rem;
         font-weight: 800;
         margin: 0;
     }}
-
     .yvora-subtitle {{
         color: {BRAND_MUTED};
         font-size: 1rem;
@@ -265,7 +257,6 @@ def set_page_style():
         margin-top: 8px;
         max-width: 700px;
     }}
-
     .yvora-card {{
         background: linear-gradient(180deg, {BRAND_CARD} 0%, {BRAND_SOFT} 100%);
         border-radius: 22px;
@@ -274,30 +265,25 @@ def set_page_style():
         margin-bottom: 18px;
         box-shadow: 0 10px 28px rgba(14,42,71,0.05);
     }}
-
     .yvora-card-title {{
         font-size: 1.28rem;
         font-weight: 800;
         color: {BRAND_BLUE};
         margin-bottom: 4px;
     }}
-
-    .yvora-card-sub, .yvora-mini, .yvora-muted {{
+    .yvora-card-sub, .yvora-mini {{
         color: {BRAND_MUTED};
     }}
-
     .yvora-card-sub {{
         font-size: 0.93rem;
         margin-bottom: 10px;
     }}
-
     .yvora-section-head {{
         color: {BRAND_BLUE};
         font-size: 1.02rem;
         font-weight: 800;
         margin: 6px 0 8px 0;
     }}
-
     .yvora-warn {{
         background: {BRAND_WARN};
         border-radius: 14px;
@@ -306,7 +292,6 @@ def set_page_style():
         color: {BRAND_BLUE};
         white-space: pre-wrap;
     }}
-
     .yvora-chip {{
         display: inline-flex;
         align-items: center;
@@ -322,7 +307,6 @@ def set_page_style():
         background: rgba(255,255,255,0.8);
         white-space: nowrap;
     }}
-
     .yvora-quote {{
         background: rgba(255,255,255,0.86);
         border: 1px solid rgba(14,42,71,0.08);
@@ -334,7 +318,6 @@ def set_page_style():
         font-size: 1rem;
         line-height: 1.45rem;
     }}
-
     .yvora-context {{
         background: rgba(255,255,255,0.78);
         border: 1px solid rgba(14,42,71,0.08);
@@ -345,7 +328,6 @@ def set_page_style():
         font-size: 0.95rem;
         line-height: 1.5rem;
     }}
-
     .yvora-signal-box {{
         background: rgba(255,255,255,0.78);
         border: 1px solid rgba(14,42,71,0.08);
@@ -354,7 +336,6 @@ def set_page_style():
         min-height: 72px;
         height: 100%;
     }}
-
     .yvora-signal-label {{
         color: {BRAND_MUTED};
         font-size: 0.76rem;
@@ -363,28 +344,24 @@ def set_page_style():
         letter-spacing: 0.04em;
         margin-bottom: 4px;
     }}
-
     .yvora-signal-value {{
         color: {BRAND_BLUE};
         font-size: 1.1rem;
         font-weight: 800;
         line-height: 1.2rem;
     }}
-
     .yvora-signal-sub {{
         color: {BRAND_MUTED};
         font-size: 0.82rem;
         margin-top: 4px;
         line-height: 1.1rem;
     }}
-
     .yvora-summary {{
         display: grid;
         grid-template-columns: 1fr;
         gap: 10px;
         margin-top: 12px;
     }}
-
     .yvora-line {{
         display: flex;
         gap: 10px;
@@ -421,7 +398,6 @@ def pairings_from_csv(pair_df: pd.DataFrame) -> pd.DataFrame:
         "nome_vinho": "",
         "tipo_vinho": "",
         "perfil_vinho": "",
-        "preco": "",
         "rotulo_valor": "",
         "score_harmonizacao": "",
         "estrategia_harmonizacao": "",
@@ -435,7 +411,6 @@ def pairings_from_csv(pair_df: pd.DataFrame) -> pd.DataFrame:
         "ordem_recomendacao": "",
         "ativo": "",
     }
-
     for c, default in defaults.items():
         if c not in p.columns:
             p[c] = default
@@ -448,7 +423,6 @@ def pairings_from_csv(pair_df: pd.DataFrame) -> pd.DataFrame:
 
     raw_ativo = p["ativo"].astype(str).str.strip().str.lower()
     valid_ativo_mask = raw_ativo.isin(["1", "1.0", "true", "sim", "0", "0.0", "false", "nao", "não"])
-
     if valid_ativo_mask.any():
         p["ativo_num"] = raw_ativo.apply(lambda x: 1 if x in ["1", "1.0", "true", "sim"] else 0)
         if (p["ativo_num"] == 1).any():
@@ -464,10 +438,8 @@ def pairings_from_csv(pair_df: pd.DataFrame) -> pd.DataFrame:
     p["combo_names_key"] = p["combo_names_list"].apply(
         lambda xs: "|".join(sorted([normalize_for_key(x) for x in xs if normalize_for_key(x)]))
     )
-
     p["score_ord"] = safe_numeric_series(p["score_harmonizacao"]).fillna(0)
     p["ordem_ord"] = safe_numeric_series(p["ordem_recomendacao"]).fillna(999)
-
     return p
 
 
@@ -560,10 +532,8 @@ def render_exact_text_block(row: Dict):
 
     if frase_mesa:
         st.markdown(f"<div class='yvora-quote'>💬 {frase_mesa}</div>", unsafe_allow_html=True)
-
     if motivo_score:
         st.markdown(f"<div class='yvora-context'><b>Motivo técnico:</b> {motivo_score}</div>", unsafe_allow_html=True)
-
     if por_que_carne or por_que_queijo or por_que_combo:
         st.markdown(
             f"""
@@ -577,13 +547,13 @@ def render_exact_text_block(row: Dict):
         )
 
     with st.expander("Ver leitura completa"):
-        colA, colB = st.columns(2)
-        with colA:
+        c1, c2 = st.columns(2)
+        with c1:
             st.markdown("**Carne**")
             st.write(por_que_carne or "-")
             st.markdown("**Queijo**")
             st.write(por_que_queijo or "-")
-        with colB:
+        with c2:
             st.markdown("**Conjunto**")
             st.write(por_que_combo or "-")
             st.markdown("**Valor da escolha**")
@@ -606,23 +576,18 @@ def sort_pairings_subset(p_subset: pd.DataFrame) -> pd.DataFrame:
             ascending=[False, True],
             kind="mergesort",
         )
-
     return p_subset.head(2)
 
 
 def render_recos_block(title: str, p_subset: pd.DataFrame, wines_meta_map: Dict[str, Dict[str, str]]):
     st.markdown("<div class='yvora-card'>", unsafe_allow_html=True)
     st.markdown(f"<div class='yvora-card-title'>{title}</div>", unsafe_allow_html=True)
-    st.markdown(
-        "<div class='yvora-card-sub'>Sugestões vindas diretamente da linha correspondente na base.</div>",
-        unsafe_allow_html=True,
-    )
+    st.markdown("<div class='yvora-card-sub'>Sugestões vindas diretamente da linha correspondente na base.</div>", unsafe_allow_html=True)
 
     p_subset = sort_pairings_subset(p_subset)
 
     for idx, (_, row_series) in enumerate(p_subset.iterrows()):
         row = row_series.to_dict()
-
         nome_vinho = clean_display_text(row.get("nome_vinho", ""))
         id_vinho = clean_display_text(row.get("id_vinho", ""))
         option_label = "1ª opção" if idx == 0 else "2ª opção"
@@ -663,10 +628,10 @@ def render_recos_block(title: str, p_subset: pd.DataFrame, wines_meta_map: Dict[
 
 
 def header_area():
-    col1, col2 = st.columns([1, 4], vertical_alignment="center")
-    with col1:
+    c1, c2 = st.columns([1, 4], vertical_alignment="center")
+    with c1:
         render_logo(width=130)
-    with col2:
+    with c2:
         st.markdown(
             """
             <div class="yvora-hero">
@@ -682,18 +647,20 @@ def render_client(pairings: pd.DataFrame, wines: pd.DataFrame):
     st.markdown("<div class='yvora-section-head'>Escolha seus pratos</div>", unsafe_allow_html=True)
 
     prato_rows = pairings[pairings["tipo_pairing"] == "prato"].copy()
-    single_dishes = (
-        prato_rows["nomes_pratos"]
-        .dropna()
-        .astype(str)
-        .map(clean_display_text)
-        .tolist()
+    single_dishes = sorted(
+        set(
+            prato_rows["nomes_pratos"]
+            .dropna()
+            .astype(str)
+            .map(clean_display_text)
+            .tolist()
+        )
     )
-    single_dishes = sorted(set([x for x in single_dishes if x]))
+    single_dishes = [x for x in single_dishes if x]
 
     if not single_dishes:
         st.markdown(
-            "<div class='yvora-warn'><b>Nenhum prato foi encontrado no arquivo de pairings.</b><br>Revise a exportação da planilha.</div>",
+            "<div class='yvora-warn'><b>Nenhum prato foi encontrado no arquivo de pairings.</b><br>Revise a aba usada em PAIRINGS_SHEET_URL.</div>",
             unsafe_allow_html=True,
         )
         return
@@ -722,8 +689,10 @@ def render_client(pairings: pd.DataFrame, wines: pd.DataFrame):
         st.info("Selecione ao menos 1 prato para ver as sugestões.")
         return
 
-    if len(selected_names) == 1:
-        dish = clean_display_text(selected_names[0])
+    selected_clean = [clean_display_text(x) for x in selected_names]
+
+    if len(selected_clean) == 1:
+        dish = selected_clean[0]
         dish_key = normalize_for_key(dish)
 
         p_one = pairings[
@@ -741,9 +710,7 @@ def render_client(pairings: pd.DataFrame, wines: pd.DataFrame):
         render_recos_block(dish, p_one, wines_meta_map)
         return
 
-    selected_clean = [clean_display_text(x) for x in selected_names]
     combo_key = "|".join(sorted([normalize_for_key(x) for x in selected_clean]))
-
     p_combo = pairings[
         (pairings["tipo_pairing"] == "combo") &
         (pairings["combo_names_key"] == combo_key)
@@ -779,18 +746,23 @@ def render_client(pairings: pd.DataFrame, wines: pd.DataFrame):
 def render_dm(pairings: pd.DataFrame):
     st.markdown("<div class='yvora-section-head'>Diagnóstico DM</div>", unsafe_allow_html=True)
 
-    pratos_unicos = (
-        pairings[pairings["tipo_pairing"] == "prato"]["nomes_pratos"]
-        .dropna()
-        .astype(str)
-        .map(clean_display_text)
-        .tolist()
+    pratos_unicos = sorted(
+        set(
+            pairings[pairings["tipo_pairing"] == "prato"]["nomes_pratos"]
+            .dropna()
+            .astype(str)
+            .map(clean_display_text)
+            .tolist()
+        )
     )
-    pratos_unicos = sorted(set([x for x in pratos_unicos if x]))
+    pratos_unicos = [x for x in pratos_unicos if x]
 
     st.write(f"Linhas carregadas: **{len(pairings)}**")
     st.write(f"Pratos únicos encontrados: **{len(pratos_unicos)}**")
-    st.write(pratos_unicos[:20])
+    st.write(pratos_unicos[:50])
+
+    if len(pratos_unicos) <= 1:
+        st.warning("A exportação atual está trazendo apenas 1 prato único. Revise filtros ou a aba/gid usada em PAIRINGS_SHEET_URL.")
 
     debug_cols = [
         "tipo_pairing",
@@ -803,7 +775,6 @@ def render_dm(pairings: pd.DataFrame):
         "score_harmonizacao",
         "ativo_num",
     ]
-
     for c in debug_cols:
         if c not in pairings.columns:
             pairings[c] = ""

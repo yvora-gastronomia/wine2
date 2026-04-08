@@ -1,4 +1,3 @@
-import hashlib
 import io
 import re
 import unicodedata
@@ -68,21 +67,23 @@ def clean_display_text(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
-def normalize_for_match(s: str) -> str:
+def normalize_for_key(s: str) -> str:
     s = clean_display_text(s).lower()
     s = unicodedata.normalize("NFD", s)
     s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
     s = s.replace("'", "")
     s = s.replace('"', "")
-    s = s.replace("_", " ")
-    s = s.replace("(", " ").replace(")", " ")
-    s = s.replace("[", " ").replace("]", " ")
-    s = s.replace("{", " ").replace("}", " ")
+    s = s.replace("&", " e ")
+    s = s.replace("+", " + ")
+    s = s.replace("|", " | ")
     s = s.replace("/", " ")
     s = s.replace("\\", " ")
-    s = s.replace("|", " | ")
-    s = s.replace("+", " + ")
-    s = s.replace("&", " ")
+    s = s.replace("(", " ")
+    s = s.replace(")", " ")
+    s = s.replace("[", " ")
+    s = s.replace("]", " ")
+    s = s.replace("{", " ")
+    s = s.replace("}", " ")
     s = s.replace("-", " ")
     s = re.sub(r"[^a-z0-9\s|+]", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
@@ -91,7 +92,7 @@ def normalize_for_match(s: str) -> str:
 
 def to_int(x, default: int = 0) -> int:
     s = norm_text(x)
-    if s == "":
+    if not s:
         return default
     try:
         return int(float(s.replace(",", ".")))
@@ -101,7 +102,7 @@ def to_int(x, default: int = 0) -> int:
 
 def to_float(x) -> Optional[float]:
     s = norm_text(x).replace("R$", "").replace(".", "").replace(",", ".").strip()
-    if s == "":
+    if not s:
         return None
     try:
         return float(s)
@@ -116,11 +117,6 @@ def safe_numeric_series(series: pd.Series) -> pd.Series:
         .str.extract(r"(-?\d+(?:\.\d+)?)", expand=False),
         errors="coerce",
     )
-
-
-def sheet_hash(df: pd.DataFrame) -> str:
-    payload = df.fillna("").astype(str).to_csv(index=False)
-    return hashlib.md5(payload.encode("utf-8")).hexdigest()[:10]
 
 
 def _decode_csv_bytes(raw: bytes) -> str:
@@ -161,9 +157,7 @@ def _candidate_sheet_csv_urls(url: str) -> List[str]:
         raise ValueError("URL vazia.")
 
     if "googleusercontent.com" in u:
-        raise ValueError(
-            "Use o link original da planilha do Google Sheets, não um link temporário googleusercontent."
-        )
+        raise ValueError("Use o link original da planilha do Google Sheets, não um link temporário googleusercontent.")
 
     if "docs.google.com/spreadsheets" not in u:
         raise ValueError(f"URL inválida para Google Sheets: {u}")
@@ -199,23 +193,7 @@ def get_asset_bytes(local_path: Path, fallback_url: str = "") -> Optional[bytes]
     return None
 
 
-def render_logo(width: Optional[int] = None, use_container_width: bool = False):
-    logo_url = _get_secret("LOGO_URL", "")
-    b = get_asset_bytes(LOGO_LOCAL_PATH, logo_url)
-    if b:
-        st.image(b, width=width, use_container_width=use_container_width)
-    else:
-        st.caption("Logo não encontrada. Inclua em assets/ ou configure LOGO_URL em secrets.")
-
-
-def sidebar_brand():
-    with st.sidebar:
-        render_logo(use_container_width=True)
-        st.caption("YVORA | Meat & Cheese Lab")
-
-
-@st.cache_data(ttl=45)
-def load_csv_from_url(url: str, source_name: str = "SHEET") -> pd.DataFrame:
+def load_csv_from_url_uncached(url: str, source_name: str = "SHEET") -> pd.DataFrame:
     candidate_urls = _candidate_sheet_csv_urls(url)
 
     headers = {
@@ -247,12 +225,6 @@ def load_csv_from_url(url: str, source_name: str = "SHEET") -> pd.DataFrame:
 
             return pd.read_csv(io.StringIO(csv_text), dtype=str, keep_default_na=False)
 
-        except requests.HTTPError as e:
-            last_error = ValueError(f"[{source_name}] tentativa {idx} falhou.\nURL: {export_url}\nErro: {e}")
-            continue
-        except requests.RequestException as e:
-            last_error = ValueError(f"[{source_name}] tentativa {idx} falhou.\nURL: {export_url}\nErro: {e}")
-            continue
         except Exception as e:
             last_error = ValueError(f"[{source_name}] tentativa {idx} falhou.\nURL: {export_url}\nErro: {e}")
             continue
@@ -276,8 +248,28 @@ def split_multi_value_tokens(s: str) -> List[str]:
     return [norm_text(p) for p in parts if norm_text(p)]
 
 
-def make_key_for_pratos(prato_ids: List[str]) -> str:
-    vals = [norm_text(x) for x in prato_ids if norm_text(x)]
+def split_name_tokens(s: str) -> List[str]:
+    raw = clean_display_text(s)
+    if not raw:
+        return []
+    if "|" in raw:
+        parts = raw.split("|")
+    elif re.search(r"\s\+\s", raw):
+        parts = re.split(r"\s\+\s", raw)
+    elif ";" in raw:
+        parts = raw.split(";")
+    else:
+        parts = [raw]
+    return [clean_display_text(p) for p in parts if clean_display_text(p)]
+
+
+def make_ids_key(values: List[str]) -> str:
+    vals = [norm_text(x) for x in values if norm_text(x)]
+    return "|".join(sorted(vals))
+
+
+def make_names_key(values: List[str]) -> str:
+    vals = [normalize_for_key(x) for x in values if normalize_for_key(x)]
     return "|".join(sorted(vals))
 
 
@@ -285,178 +277,19 @@ def is_wine_available_now(w: Dict) -> bool:
     return to_int(w.get("ativo", w.get("active", 0)), 0) == 1 and to_int(w.get("estoque", 0), 0) > 0
 
 
-def _split_pairing_names(raw: str) -> List[str]:
-    text = clean_display_text(raw)
-    if not text:
-        return []
-
-    if "|" in text:
-        parts = text.split("|")
-    elif re.search(r"\s\+\s", text):
-        parts = re.split(r"\s\+\s", text)
-    elif ";" in text:
-        parts = text.split(";")
+def render_logo(width: Optional[int] = None, use_container_width: bool = False):
+    logo_url = _get_secret("LOGO_URL", "")
+    b = get_asset_bytes(LOGO_LOCAL_PATH, logo_url)
+    if b:
+        st.image(b, width=width, use_container_width=use_container_width)
     else:
-        parts = [text]
-
-    return [clean_display_text(p) for p in parts if clean_display_text(p)]
+        st.caption("Logo não encontrada. Inclua em assets/ ou configure LOGO_URL em secrets.")
 
 
-def _normalized_name_list(raw: str) -> List[str]:
-    return [normalize_for_match(x) for x in _split_pairing_names(raw) if normalize_for_match(x)]
-
-
-def _make_ids_key(values: List[str]) -> str:
-    vals = [norm_text(x) for x in values if norm_text(x)]
-    return "|".join(sorted(vals))
-
-
-def _make_names_key(values: List[str]) -> str:
-    vals = [normalize_for_match(x) for x in values if normalize_for_match(x)]
-    return "|".join(sorted(vals))
-
-
-def _row_dish_count(row: pd.Series) -> int:
-    ids_list = row.get("ids_pratos_list", [])
-    if ids_list:
-        return len([x for x in ids_list if norm_text(x)])
-
-    names_list = row.get("nomes_pratos_list_norm", [])
-    if names_list:
-        return len([x for x in names_list if norm_text(x)])
-
-    return 0
-
-
-def _is_combo_tipo(raw: str) -> bool:
-    t = normalize_for_match(raw)
-    return t in {"combo", "dupla", "combinacao", "combinação"}
-
-
-def _menu_name_variants(name: str) -> List[str]:
-    raw = clean_display_text(name)
-    norm = normalize_for_match(raw)
-
-    variants = {norm}
-
-    alias_map = {
-        "croquetta de parma": ["croqueta de parma", "croquetta", "croqueta", "parma"],
-        "roast beef rosado com creme aerado de gorgonzola": ["roast beef"],
-        "espetinho de cupim de longa coccao com tortillas e provolone defumado": [
-            "espetinho de cupim",
-            "cupim",
-            "provolone defumado",
-        ],
-        "espetinho de cupim de longa coccao com tortilhas e provolone defumado": [
-            "espetinho de cupim",
-            "cupim",
-            "provolone defumado",
-        ],
-        "parma italiano com creme de gorgonzola dolce": ["parma"],
-        "steak tartare com fonduta quattro formaggi": ["steak tartare", "tartare"],
-        "tartare de atum com burrata e parmesao": ["tartare de atum", "atum"],
-        "tartare de atum com burrata parmesao e pistache tostado": ["tartare de atum", "atum"],
-        "tartare de atum fresco com chevre cremoso e azeite citrico": ["tartare de atum", "atum"],
-        "nuvem da fazenda atalaia em crosta com file mignon": ["nuvem", "file mignon"],
-        "tutano assado com tartare de file mignon e queijo tulha ralado": ["tutano", "tartare de file mignon"],
-        "carpaccio bovino": ["carpaccio"],
-    }
-
-    if norm in alias_map:
-        for item in alias_map[norm]:
-            variants.add(normalize_for_match(item))
-
-    return [v for v in variants if v]
-
-
-def _build_menu_alias_index(menu: pd.DataFrame) -> Dict[str, str]:
-    alias_to_canonical: Dict[str, str] = {}
-    for name in menu["nome_prato"].dropna().tolist():
-        canonical = clean_display_text(name)
-        for alias in _menu_name_variants(canonical):
-            alias_to_canonical[alias] = canonical
-    return alias_to_canonical
-
-
-def _extract_mentioned_menu_items(text: str, alias_index: Dict[str, str]) -> List[str]:
-    t = normalize_for_match(text)
-    if not t:
-        return []
-
-    hits = set()
-    padded = f" {t} "
-
-    for alias_norm, canonical in alias_index.items():
-        if not alias_norm:
-            continue
-        token = f" {alias_norm} "
-        if token in padded:
-            hits.add(canonical)
-
-    return sorted(hits)
-
-
-def _row_text_payload(row: pd.Series) -> str:
-    fields = [
-        "frase_mesa",
-        "motivo_score",
-        "papel_do_vinho",
-        "por_que_carne",
-        "por_que_queijo",
-        "por_que_combo",
-        "por_que_vale",
-    ]
-    return " ".join(clean_display_text(row.get(f, "")) for f in fields).strip()
-
-
-def _row_is_textually_consistent(
-    row: pd.Series,
-    selected_titles: List[str],
-    alias_index: Dict[str, str],
-) -> bool:
-    payload = _row_text_payload(row)
-    if not payload:
-        return True
-
-    mentioned = _extract_mentioned_menu_items(payload, alias_index)
-    if not mentioned:
-        return True
-
-    selected_set = {clean_display_text(x) for x in selected_titles if clean_display_text(x)}
-    mentioned_set = {clean_display_text(x) for x in mentioned if clean_display_text(x)}
-
-    foreign = mentioned_set - selected_set
-    return len(foreign) == 0
-
-
-def _sanitize_text_by_selection(text: str, selected_titles: List[str], alias_index: Dict[str, str]) -> str:
-    txt = clean_display_text(text)
-    if not txt:
-        return ""
-
-    mentioned = _extract_mentioned_menu_items(txt, alias_index)
-    if not mentioned:
-        return txt
-
-    selected_set = {clean_display_text(x) for x in selected_titles if clean_display_text(x)}
-    foreign = [m for m in mentioned if clean_display_text(m) not in selected_set]
-
-    if foreign:
-        return ""
-
-    return txt
-
-
-def apply_text_consistency_filter(
-    p: pd.DataFrame,
-    selected_titles: List[str],
-    alias_index: Dict[str, str],
-) -> pd.DataFrame:
-    if p.empty:
-        return p
-
-    out = p[p.apply(lambda row: _row_is_textually_consistent(row, selected_titles, alias_index), axis=1)].copy()
-    return out
+def sidebar_brand():
+    with st.sidebar:
+        render_logo(use_container_width=True)
+        st.caption("YVORA | Meat & Cheese Lab")
 
 
 def set_page_style():
@@ -636,72 +469,6 @@ def set_page_style():
         line-height: 1.1rem;
     }}
 
-    .yvora-meters {{
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 10px 12px;
-        margin-top: 12px;
-    }}
-
-    .yvora-meter {{
-        background: rgba(255,255,255,0.78);
-        border: 1px solid rgba(14,42,71,0.08);
-        border-radius: 16px;
-        padding: 10px 11px;
-    }}
-
-    .yvora-meter-top {{
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 10px;
-        font-size: 0.87rem;
-        color: {BRAND_BLUE};
-        margin-bottom: 7px;
-        font-weight: 700;
-    }}
-
-    .yvora-bar {{
-        width: 100%;
-        height: 9px;
-        border-radius: 99px;
-        background: rgba(14,42,71,0.10);
-        overflow: hidden;
-    }}
-
-    .yvora-bar-fill {{
-        height: 9px;
-        border-radius: 99px;
-        background: linear-gradient(90deg, {BRAND_GOLD} 0%, rgba(14,42,71,0.85) 100%);
-        width: 0%;
-    }}
-
-    .yvora-summary {{
-        display: grid;
-        grid-template-columns: 1fr;
-        gap: 10px;
-        margin-top: 12px;
-    }}
-
-    .yvora-line {{
-        display: flex;
-        gap: 10px;
-        align-items: flex-start;
-        background: rgba(255,255,255,0.8);
-        border: 1px solid rgba(14,42,71,0.08);
-        padding: 12px 13px;
-        border-radius: 16px;
-        color: {BRAND_BLUE};
-        font-size: 0.95rem;
-        line-height: 1.38rem;
-    }}
-
-    .yvora-line span {{
-        white-space: normal;
-        word-break: normal;
-        overflow-wrap: break-word;
-    }}
-
     .stMultiSelect label {{
         color: {BRAND_BLUE};
         font-weight: 700;
@@ -711,12 +478,6 @@ def set_page_style():
         border: 1px solid rgba(14,42,71,0.08);
         border-radius: 16px;
         background: rgba(255,255,255,0.72);
-    }}
-
-    @media (max-width: 980px) {{
-        .yvora-meters {{
-            grid-template-columns: 1fr;
-        }}
     }}
     </style>
     """
@@ -764,224 +525,11 @@ def render_signal_grid(row: Dict, option_label: str):
     with c1:
         _signal_box(f"✨ {option_label}", stars, "Score Match")
     with c2:
-        _signal_box("Estratégia", strategy or "Não informada", "Como o vinho entra")
+        _signal_box("Estratégia", strategy or "-", "Como o vinho entra")
 
     c3, _ = st.columns([1, 1])
     with c3:
-        _signal_box("Papel do vinho", role or "Não informado", "O que ele faz")
-
-
-def summarize_single_title(title: str) -> str:
-    t = clean_display_text(title)
-    tl = normalize_for_match(t)
-
-    mapping = [
-        ("steak tartare com fonduta quattro formaggi", "steak tartare"),
-        ("tartare de atum com burrata e parmesao", "tartare de atum"),
-        ("tartare de atum com burrata parmesao e pistache tostado", "tartare de atum"),
-        ("tartare de atum fresco com chevre cremoso e azeite citrico", "tartare de atum"),
-        ("croquetta de parma", "croquetta de parma"),
-        ("croqueta de parma", "croquetta de parma"),
-        ("parma italiano com creme de gorgonzola dolce", "parma"),
-        ("roast beef rosado com creme aerado de gorgonzola", "roast beef"),
-        ("espetinho de cupim de longa coccao com tortillas e provolone defumado", "cupim"),
-        ("espetinho de cupim de longa coccao com tortilhas e provolone defumado", "cupim"),
-        ("nuvem da fazenda atalaia em crosta com file mignon", "nuvem atalaia com file mignon"),
-        ("tutano assado com tartare de file mignon e queijo tulha ralado", "tutano com tartare"),
-        ("carpaccio bovino", "carpaccio bovino"),
-    ]
-
-    for k, v in mapping:
-        if normalize_for_match(k) in tl:
-            return v
-
-    return t
-
-
-def summarize_combo_title(title: str) -> str:
-    t = clean_display_text(title)
-
-    if "|" in t:
-        parts = [clean_display_text(x) for x in t.split("|") if clean_display_text(x)]
-        if len(parts) == 2:
-            return f"{summarize_single_title(parts[0])} + {summarize_single_title(parts[1])}"
-
-    if " + " in t:
-        parts = [clean_display_text(x) for x in t.split(" + ") if clean_display_text(x)]
-        if len(parts) == 2:
-            return f"{summarize_single_title(parts[0])} + {summarize_single_title(parts[1])}"
-
-    return summarize_single_title(t)
-
-
-def is_combo_context(title: str) -> bool:
-    t = clean_display_text(title)
-    return "|" in t or " + " in t.lower()
-
-
-def ensure_connected_summary(row: Dict, dish_title: str) -> str:
-    frase = clean_display_text(row.get("frase_mesa", ""))
-    nome_vinho = clean_display_text(row.get("nome_vinho", ""))
-    prato = summarize_combo_title(dish_title)
-    combo = clean_display_text(row.get("por_que_combo", ""))
-
-    if frase and nome_vinho.lower() in frase.lower():
-        return frase
-
-    combo_sentence = combo.split(". ")[0].strip() if combo else ""
-    if combo_sentence and nome_vinho and prato:
-        text = combo_sentence
-        if nome_vinho.lower() not in text.lower():
-            text = f"{nome_vinho} acompanha {prato} porque {text[:1].lower() + text[1:] if len(text) > 1 else text.lower()}"
-        return text.rstrip(".") + "."
-
-    if nome_vinho and prato:
-        return f"{nome_vinho} acompanha {prato} porque entrega uma leitura coerente da harmonização."
-
-    return frase or combo or "-"
-
-
-def build_summary_lines(row: Dict, title: str) -> Tuple[str, str, str]:
-    combo_label = summarize_combo_title(title)
-
-    pc = clean_display_text(row.get("por_que_carne", ""))
-    pq = clean_display_text(row.get("por_que_queijo", ""))
-    combo = clean_display_text(row.get("por_que_combo", ""))
-
-    if not pc:
-        if is_combo_context(title):
-            pc = f"No conjunto {combo_label}, o vinho sustenta a proteína principal sem perder presença."
-        else:
-            pc = "O vinho foi escolhido para acompanhar a proteína sem perder presença no prato."
-
-    if not pq:
-        if is_combo_context(title):
-            pq = f"Na combinação {combo_label}, o vinho foi pensado para lidar com sal, gordura e textura dos queijos envolvidos."
-        else:
-            pq = "O vinho foi pensado para lidar com sal, gordura e textura do queijo."
-
-    if not combo:
-        if is_combo_context(title):
-            combo = f"O vinho foi escolhido para organizar {combo_label} no paladar com leitura clara e sem conflito."
-        else:
-            combo = "A leitura final busca clareza no paladar e uma decisão fácil para o cliente."
-
-    return pc, pq, combo
-
-
-def build_reason_text(row: Dict, title: str) -> str:
-    nome_vinho = clean_display_text(row.get("nome_vinho", ""))
-    prato = summarize_combo_title(title)
-    score_reason = clean_display_text(row.get("motivo_score", ""))
-    role = clean_display_text(row.get("papel_do_vinho", ""))
-    strategy = clean_display_text(row.get("estrategia_harmonizacao", ""))
-
-    if score_reason and nome_vinho and prato:
-        base = score_reason.rstrip(".")
-        if nome_vinho.lower() not in base.lower():
-            return f"{nome_vinho} foi recomendado para {prato} porque {base[:1].lower() + base[1:] if len(base) > 1 else base.lower()}."
-        return base + "."
-
-    parts = []
-    if role:
-        parts.append(role)
-    if strategy:
-        parts.append(strategy)
-
-    if nome_vinho and prato and parts:
-        return f"{nome_vinho} foi recomendado para {prato} por {', '.join(parts)}."
-    if nome_vinho and prato:
-        return f"{nome_vinho} foi recomendado para {prato} por leitura sensorial do prato e do vinho."
-    return ""
-
-
-def _parse_profile_line(text: str) -> Dict[str, str]:
-    t = norm_text(text).lower()
-    out: Dict[str, str] = {}
-
-    def num(label: str):
-        m = re.search(rf"{label}\s*[:=\-]?\s*(\d)\s*/\s*5", t)
-        return int(m.group(1)) if m else None
-
-    ac = num("acidez")
-    co = num("corpo")
-    ta = num("tanino")
-
-    if ac is not None:
-        out["acidez"] = str(max(0, min(5, ac)))
-    if co is not None:
-        out["corpo"] = str(max(0, min(5, co)))
-    if ta is not None:
-        out["tanino"] = str(max(0, min(5, ta)))
-
-    m = re.search(r"final\s*[:=\-]?\s*(curto|medio|médio|longo)", t)
-    if m:
-        out["final"] = m.group(1).replace("medio", "médio")
-
-    m = re.search(r"(aromas?|perfil\s+arom[aá]tico)\s*[:=\-]\s*([^|\n]{3,90})", norm_text(text), flags=re.IGNORECASE)
-    if m:
-        out["aromas"] = clean_display_text(m.group(2))
-    return out
-
-
-def _pct_from_5(n: int) -> int:
-    return int((max(0, min(5, n)) / 5) * 100)
-
-
-def render_visual_profile(row: Dict):
-    prof = _parse_profile_line(row.get("a_melhor_para", ""))
-    if not prof:
-        return
-
-    st.markdown("<div class='yvora-meters'>", unsafe_allow_html=True)
-
-    def meter(title: str, value_0_5: Optional[int]):
-        if value_0_5 is None:
-            return
-        pct = _pct_from_5(value_0_5)
-        st.markdown(
-            f"""
-            <div class="yvora-meter">
-              <div class="yvora-meter-top"><span>{title}</span><span>{value_0_5}/5</span></div>
-              <div class="yvora-bar"><div class="yvora-bar-fill" style="width:{pct}%"></div></div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    ac = int(prof.get("acidez")) if prof.get("acidez") else None
-    co = int(prof.get("corpo")) if prof.get("corpo") else None
-    ta = int(prof.get("tanino")) if prof.get("tanino") else None
-
-    meter("Acidez", ac)
-    meter("Corpo", co)
-    meter("Tanino", ta)
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    fi = prof.get("final", "")
-    ar = prof.get("aromas", "")
-    bits = []
-    if fi:
-        bits.append(f"Final: {fi}")
-    if ar:
-        bits.append(f"Aromas: {ar}")
-    if bits:
-        st.markdown(f"<div class='yvora-mini'>{'  |  '.join(bits)}</div>", unsafe_allow_html=True)
-
-
-def render_icon_row(row: Dict, wine_type: str):
-    chips = []
-    for icon, key in [("🏷️", "rotulo_valor"), ("🍇", "perfil_vinho"), ("✨", "estrategia_harmonizacao")]:
-        value = clean_display_text(row.get(key, ""))
-        if value:
-            chips.append(f"<span class='yvora-chip'>{icon} {value}</span>")
-
-    if wine_type:
-        chips.append(f"<span class='yvora-chip'>🍷 {wine_type}</span>")
-
-    if chips:
-        st.markdown("".join(chips), unsafe_allow_html=True)
+        _signal_box("Papel do vinho", role or "-", "O que ele faz")
 
 
 def standardize_menu(menu_df: pd.DataFrame) -> pd.DataFrame:
@@ -998,17 +546,6 @@ def standardize_menu(menu_df: pd.DataFrame) -> pd.DataFrame:
     c_desc = pick(["descricao_prato", "descricao", "descrição", "desc"])
     c_ativo = pick(["ativo", "active", "status"])
 
-    if "id" in df.columns and not c_id:
-        c_id = "id"
-    if "prato" in df.columns and not c_nome:
-        c_nome = "prato"
-    if "nome" in df.columns and not c_nome:
-        c_nome = "nome"
-    if "descrição" in df.columns and not c_desc:
-        c_desc = "descrição"
-    if "descricao" in df.columns and not c_desc:
-        c_desc = "descricao"
-
     out = pd.DataFrame()
     out["id_prato"] = df[c_id] if c_id else ""
     out["nome_prato"] = df[c_nome] if c_nome else ""
@@ -1022,7 +559,9 @@ def standardize_menu(menu_df: pd.DataFrame) -> pd.DataFrame:
 
     m = out["id_prato"].eq("")
     out.loc[m, "id_prato"] = out.loc[m, "nome_prato"]
+
     out = out[(out["nome_prato"] != "") & (out["ativo"] == 1)].copy()
+    out["nome_prato_key"] = out["nome_prato"].apply(normalize_for_key)
     return out.drop_duplicates(subset=["id_prato", "nome_prato"])
 
 
@@ -1080,68 +619,63 @@ def standardize_wines(wines_df: pd.DataFrame) -> pd.DataFrame:
 
     m = out["id_vinho"].eq("")
     out.loc[m, "id_vinho"] = out.loc[m, "nome_vinho"]
+
     return out[out["nome_vinho"] != ""].drop_duplicates(subset=["id_vinho", "nome_vinho"])
 
 
 def standardize_pairings(pair_df: pd.DataFrame) -> pd.DataFrame:
     p = pair_df.copy()
+
     defaults = {
+        "data_geracao": "",
         "tipo_pairing": "",
         "chave_pratos": "",
         "ids_pratos": "",
         "nomes_pratos": "",
         "id_vinho": "",
         "nome_vinho": "",
+        "preco": "",
+        "frase_mesa": "",
+        "por_que_carne": "",
+        "por_que_queijo": "",
+        "por_que_combo": "",
+        "perfil_custo_beneficio": "",
+        "por_que_vale": "",
+        "a_melhor_para": "",
         "rotulo_valor": "",
+        "origem": "",
+        "ativo": "",
         "tipo_vinho": "",
         "perfil_vinho": "",
         "score_harmonizacao": "",
         "estrategia_harmonizacao": "",
         "papel_do_vinho": "",
-        "nivel_confianca": "",
-        "estrutura_match": "",
-        "acidez_match": "",
-        "tanino_match": "",
-        "ponte_aromatica": "",
-        "risco_sensorial": "",
-        "diversidade_penalidade": "",
-        "contador_uso_vinho": "",
         "motivo_score": "",
-        "perfil_custo_beneficio": "",
-        "selo_harmonizacao": "",
-        "a_melhor_para": "",
-        "frase_mesa": "",
-        "por_que_carne": "",
-        "por_que_queijo": "",
-        "por_que_combo": "",
-        "por_que_vale": "",
         "ordem_recomendacao": "",
     }
+
     for c, default in defaults.items():
         if c not in p.columns:
             p[c] = default
-
-    if "ativo" in p.columns:
-        p["ativo"] = p["ativo"].apply(
-            lambda x: 1 if norm_text(x).lower() in ["1", "1.0", "true", "sim"] else 0
-        )
-    else:
-        p["ativo"] = 1
 
     for c in p.columns:
         if p[c].dtype == object:
             p[c] = p[c].apply(clean_display_text)
 
-    p["score_ord"] = safe_numeric_series(p["score_harmonizacao"]).fillna(0)
-    p["ordem_ord"] = safe_numeric_series(p["ordem_recomendacao"]).fillna(999)
+    if "ativo" in p.columns:
+        p["ativo"] = p["ativo"].apply(lambda x: 1 if norm_text(x).lower() in ["1", "1.0", "true", "sim"] else 0)
+    else:
+        p["ativo"] = 1
 
     p["ids_pratos_list"] = p["ids_pratos"].apply(split_multi_value_tokens)
-    p["ids_pratos_key"] = p["ids_pratos_list"].apply(_make_ids_key)
+    p["ids_key"] = p["ids_pratos_list"].apply(make_ids_key)
 
-    p["nomes_pratos_list_norm"] = p["nomes_pratos"].apply(_normalized_name_list)
-    p["nomes_pratos_key"] = p["nomes_pratos_list_norm"].apply(_make_names_key)
+    p["nomes_pratos_list"] = p["nomes_pratos"].apply(split_name_tokens)
+    p["names_key"] = p["nomes_pratos_list"].apply(make_names_key)
+    p["dish_count"] = p["nomes_pratos_list"].apply(len)
 
-    p["dish_count"] = p.apply(_row_dish_count, axis=1)
+    p["score_ord"] = safe_numeric_series(p["score_harmonizacao"]).fillna(0)
+    p["ordem_ord"] = safe_numeric_series(p["ordem_recomendacao"]).fillna(999)
 
     return p[p["ativo"] == 1].copy()
 
@@ -1158,109 +692,56 @@ def load_all_data() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     if not pairings_url:
         raise ValueError("PAIRINGS_SHEET_URL não configurado.")
 
-    menu_df = normalize_cols(load_csv_from_url(menu_url, "MENU"))
-    wines_df = normalize_cols(load_csv_from_url(wines_url, "WINES"))
-    pair_df = normalize_cols(load_csv_from_url(pairings_url, "PAIRINGS"))
+    menu_df = normalize_cols(load_csv_from_url_uncached(menu_url, "MENU"))
+    wines_df = normalize_cols(load_csv_from_url_uncached(wines_url, "WINES"))
+    pair_df = normalize_cols(load_csv_from_url_uncached(pairings_url, "PAIRINGS"))
 
     return menu_df, wines_df, pair_df
 
 
-def _row_matches_single(row: pd.Series, prato_id: str, prato_nome: str) -> bool:
-    target_id = norm_text(prato_id)
-    target_name_key = _make_names_key([prato_nome])
-
-    row_tipo = row.get("tipo_pairing", "")
-    row_count = int(row.get("dish_count", 0) or 0)
-
-    if _is_combo_tipo(row_tipo):
-        return False
-
-    if row_count not in (0, 1):
-        return False
-
-    row_ids_key = norm_text(row.get("ids_pratos_key", ""))
-    if target_id and row_ids_key:
-        return row_ids_key == target_id
-
-    row_names_key = norm_text(row.get("nomes_pratos_key", ""))
-    if target_name_key and row_names_key:
-        return row_names_key == target_name_key
-
-    return False
-
-
-def _row_matches_combo(row: pd.Series, prato_ids: List[str], prato_nomes: List[str]) -> bool:
-    target_ids_key = _make_ids_key(prato_ids)
-    target_names_key = _make_names_key(prato_nomes)
-
-    row_count = int(row.get("dish_count", 0) or 0)
-    target_count = len([x for x in prato_ids if norm_text(x)])
-
-    if row_count not in (0, target_count):
-        return False
-
-    row_ids_key = norm_text(row.get("ids_pratos_key", ""))
-    if target_ids_key and row_ids_key:
-        return row_ids_key == target_ids_key
-
-    row_names_key = norm_text(row.get("nomes_pratos_key", ""))
-    if target_names_key and row_names_key:
-        return row_names_key == target_names_key
-
-    return False
-
-
-def filter_pairings_for_single(
+def filter_pairings_exact_single(
     pairings: pd.DataFrame,
     prato_id: str,
     prato_nome: str,
     available_ids: set,
 ) -> pd.DataFrame:
+    target_id = norm_text(prato_id)
+    target_name_key = make_names_key([prato_nome])
+
     p = pairings.copy()
     p = p[p["id_vinho"].isin(available_ids)].copy()
-    p = p[p.apply(lambda row: _row_matches_single(row, prato_id, prato_nome), axis=1)].copy()
-    return p
+
+    by_id = p[(p["dish_count"] == 1) & (p["ids_key"] == target_id)].copy()
+    if not by_id.empty:
+        return by_id
+
+    by_name = p[(p["dish_count"] == 1) & (p["names_key"] == target_name_key)].copy()
+    return by_name
 
 
-def filter_pairings_for_combo(
+def filter_pairings_exact_combo(
     pairings: pd.DataFrame,
     prato_ids: List[str],
     prato_nomes: List[str],
     available_ids: set,
 ) -> pd.DataFrame:
+    target_ids_key = make_ids_key(prato_ids)
+    target_names_key = make_names_key(prato_nomes)
+    target_count = len(prato_nomes)
+
     p = pairings.copy()
     p = p[p["id_vinho"].isin(available_ids)].copy()
-    p = p[p.apply(lambda row: _row_matches_combo(row, prato_ids, prato_nomes), axis=1)].copy()
-    return p
 
+    by_id = p[(p["dish_count"] == target_count) & (p["ids_key"] == target_ids_key)].copy()
+    if not by_id.empty:
+        return by_id
 
-def header_area():
-    col1, col2 = st.columns([1, 4], vertical_alignment="center")
-    with col1:
-        render_logo(width=130)
-    with col2:
-        st.markdown(
-            """
-            <div class="yvora-hero">
-              <div class="yvora-title">Wine Pairing</div>
-              <div class="yvora-subtitle">Escolha até 2 pratos para ver a recomendação de vinho.</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    by_name = p[(p["dish_count"] == target_count) & (p["names_key"] == target_names_key)].copy()
+    return by_name
 
 
 def sort_pairings_subset(p_subset: pd.DataFrame) -> pd.DataFrame:
     p_subset = p_subset.copy()
-
-    if "ordem_ord" not in p_subset.columns:
-        p_subset["ordem_ord"] = safe_numeric_series(
-            p_subset.get("ordem_recomendacao", pd.Series([], dtype=str))
-        ).fillna(999)
-    if "score_ord" not in p_subset.columns:
-        p_subset["score_ord"] = safe_numeric_series(
-            p_subset.get("score_harmonizacao", pd.Series([], dtype=str))
-        ).fillna(0)
 
     has_explicit_order = (p_subset["ordem_ord"] < 999).any()
 
@@ -1280,44 +761,73 @@ def sort_pairings_subset(p_subset: pd.DataFrame) -> pd.DataFrame:
     return p_subset.head(2)
 
 
+def render_exact_text_block(row: Dict):
+    frase_mesa = clean_display_text(row.get("frase_mesa", ""))
+    por_que_carne = clean_display_text(row.get("por_que_carne", ""))
+    por_que_queijo = clean_display_text(row.get("por_que_queijo", ""))
+    por_que_combo = clean_display_text(row.get("por_que_combo", ""))
+    por_que_vale = clean_display_text(row.get("por_que_vale", ""))
+    motivo_score = clean_display_text(row.get("motivo_score", ""))
+
+    if frase_mesa:
+        st.markdown(f"<div class='yvora-quote'>💬 {frase_mesa}</div>", unsafe_allow_html=True)
+
+    context_lines = []
+    if motivo_score:
+        context_lines.append(f"<b>Motivo técnico:</b> {motivo_score}")
+    if context_lines:
+        st.markdown(f"<div class='yvora-context'>{'<br>'.join(context_lines)}</div>", unsafe_allow_html=True)
+
+    if por_que_carne or por_que_queijo or por_que_combo:
+        st.markdown(
+            f"""
+            <div class="yvora-summary">
+              <div class="yvora-line">🥩 <span>{por_que_carne or "-"}</span></div>
+              <div class="yvora-line">🧀 <span>{por_que_queijo or "-"}</span></div>
+              <div class="yvora-line">🧠 <span>{por_que_combo or "-"}</span></div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with st.expander("Ver leitura completa"):
+        colA, colB = st.columns(2)
+        with colA:
+            st.markdown("**Carne**")
+            st.write(por_que_carne or "-")
+            st.markdown("**Queijo**")
+            st.write(por_que_queijo or "-")
+        with colB:
+            st.markdown("**Conjunto**")
+            st.write(por_que_combo or "-")
+            st.markdown("**Valor da escolha**")
+            st.write(por_que_vale or "-")
+
+
 def render_recos_block(
     title: str,
     p_subset: pd.DataFrame,
     wines_type_map: Dict[str, str],
     wines_meta_map: Dict[str, Dict[str, str]],
-    selected_titles: List[str],
-    alias_index: Dict[str, str],
 ):
     st.markdown("<div class='yvora-card'>", unsafe_allow_html=True)
     st.markdown(f"<div class='yvora-card-title'>{title}</div>", unsafe_allow_html=True)
-
-    if is_combo_context(title):
-        combo_short = summarize_combo_title(title)
-        sub = f"Sugestões para a combinação {combo_short}, com leitura dos dois elementos principais."
-    else:
-        sub = "Sugestões organizadas para decisão rápida, com estratégia e leitura sensorial do prato."
-    st.markdown(f"<div class='yvora-card-sub'>{sub}</div>", unsafe_allow_html=True)
+    st.markdown(
+        "<div class='yvora-card-sub'>Sugestões vindas diretamente da linha correspondente na base, sem recombinar textos.</div>",
+        unsafe_allow_html=True,
+    )
 
     p_subset = sort_pairings_subset(p_subset)
 
     for idx, (_, row_series) in enumerate(p_subset.iterrows()):
-        row = row_series.copy()
-
-        for field in [
-            "frase_mesa",
-            "motivo_score",
-            "por_que_carne",
-            "por_que_queijo",
-            "por_que_combo",
-            "por_que_vale",
-        ]:
-            row[field] = _sanitize_text_by_selection(row.get(field, ""), selected_titles, alias_index)
+        row = row_series.to_dict()
 
         nome_vinho = clean_display_text(row.get("nome_vinho", ""))
         id_vinho = clean_display_text(row.get("id_vinho", ""))
         wine_type = clean_display_text(row.get("tipo_vinho", "")) or clean_display_text(wines_type_map.get(id_vinho, ""))
         option_label = "1ª opção" if idx == 0 else "2ª opção"
         meta = wines_meta_map.get(id_vinho, {})
+
         origem_wine = " • ".join(
             [x for x in [clean_display_text(meta.get("country", "")), clean_display_text(meta.get("region", ""))] if x]
         )
@@ -1327,61 +837,55 @@ def render_recos_block(
             st.markdown(f"<div class='yvora-mini'>{origem_wine}</div>", unsafe_allow_html=True)
 
         render_signal_grid(row, option_label)
-        render_icon_row(row, wine_type)
 
-        resumo = ensure_connected_summary(row, title)
-        st.markdown(f"<div class='yvora-quote'>💬 {resumo}</div>", unsafe_allow_html=True)
+        chips = []
+        rotulo = clean_display_text(row.get("rotulo_valor", ""))
+        perfil = clean_display_text(row.get("perfil_vinho", "")) or clean_display_text(meta.get("perfil_vinho", ""))
+        estrategia = clean_display_text(row.get("estrategia_harmonizacao", ""))
 
-        render_visual_profile(row)
+        if rotulo:
+            chips.append(f"<span class='yvora-chip'>🏷️ {rotulo}</span>")
+        if perfil:
+            chips.append(f"<span class='yvora-chip'>🍇 {perfil}</span>")
+        if estrategia:
+            chips.append(f"<span class='yvora-chip'>✨ {estrategia}</span>")
+        if wine_type:
+            chips.append(f"<span class='yvora-chip'>🍷 {wine_type}</span>")
 
-        role = clean_display_text(row.get("papel_do_vinho", ""))
-        score_reason = build_reason_text(row, title)
+        if chips:
+            st.markdown("".join(chips), unsafe_allow_html=True)
 
-        context_parts = []
-        if role:
-            context_parts.append(f"<b>Papel do vinho:</b> {role}")
-        if score_reason:
-            context_parts.append(f"<b>Leitura técnica:</b> {score_reason}")
-
-        if context_parts:
-            st.markdown(f"<div class='yvora-context'>{'<br>'.join(context_parts)}</div>", unsafe_allow_html=True)
-
-        l1, l2, l3 = build_summary_lines(row, title)
-        st.markdown(
-            f"""
-            <div class="yvora-summary">
-              <div class="yvora-line">🥩 <span>{l1}</span></div>
-              <div class="yvora-line">🧀 <span>{l2}</span></div>
-              <div class="yvora-line">🧠 <span>{l3}</span></div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        with st.expander("Ver leitura completa"):
-            colA, colB = st.columns(2)
-            with colA:
-                st.markdown("**Carne**")
-                st.write(clean_display_text(row.get("por_que_carne", "")) or "-")
-                st.markdown("**Queijo**")
-                st.write(clean_display_text(row.get("por_que_queijo", "")) or "-")
-            with colB:
-                st.markdown("**Conjunto**")
-                st.write(clean_display_text(row.get("por_que_combo", "")) or "-")
-                st.markdown("**Valor da escolha**")
-                st.write(clean_display_text(row.get("por_que_vale", "")) or "-")
-
+        render_exact_text_block(row)
         st.divider()
 
     st.markdown("</div>", unsafe_allow_html=True)
 
 
+def header_area():
+    col1, col2 = st.columns([1, 4], vertical_alignment="center")
+    with col1:
+        render_logo(width=130)
+    with col2:
+        st.markdown(
+            """
+            <div class="yvora-hero">
+              <div class="yvora-title">Wine Pairing</div>
+              <div class="yvora-subtitle">Escolha até 2 pratos para ver a recomendação de vinho.</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
 def render_client(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFrame):
     st.markdown("<div class='yvora-section-head'>Escolha seus pratos</div>", unsafe_allow_html=True)
     st.markdown(
-        "<div class='yvora-muted'>Selecione 1 ou 2 pratos. O app mostra apenas vinhos com estoque disponível.</div>",
+        "<div class='yvora-muted'>Consulta direta da base fixa. O app não monta textos novos.</div>",
         unsafe_allow_html=True,
     )
+
+    if st.button("Atualizar dados agora", use_container_width=False):
+        st.rerun()
 
     selected_names = st.multiselect(
         "Selecione 1 ou 2 pratos",
@@ -1398,8 +902,6 @@ def render_client(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFram
     selected_ids = selected["id_prato"].tolist()
     selected_titles = selected["nome_prato"].tolist()
 
-    alias_index = _build_menu_alias_index(menu)
-
     wines_dict = wines.to_dict(orient="records")
     available_ids = {w["id_vinho"] for w in wines_dict if is_wine_available_now(w)}
     wines_type_map = {norm_text(w["id_vinho"]): norm_text(w.get("tipo_vinho", "")) for w in wines_dict}
@@ -1413,31 +915,22 @@ def render_client(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFram
     }
 
     if len(selected_ids) == 2:
-        p_pair = filter_pairings_for_combo(pairings, selected_ids, selected_titles, available_ids)
-        p_pair = apply_text_consistency_filter(p_pair, selected_titles, alias_index)
+        p_pair = filter_pairings_exact_combo(pairings, selected_ids, selected_titles, available_ids)
         combo_title = " | ".join(selected_titles)
 
         if p_pair.empty:
             st.markdown(
-                "<div class='yvora-warn'><b>Sem recomendação para a combinação agora.</b><br>Esta combinação ainda não foi gerada, os vinhos sugeridos estão sem estoque, ou os textos da linha estão inconsistentes com a seleção.</div>",
+                "<div class='yvora-warn'><b>Sem recomendação para a combinação agora.</b><br>Não foi encontrada uma linha exata na base para esta dupla.</div>",
                 unsafe_allow_html=True,
             )
         else:
-            render_recos_block(
-                combo_title,
-                p_pair,
-                wines_type_map,
-                wines_meta_map,
-                selected_titles,
-                alias_index,
-            )
+            render_recos_block(combo_title, p_pair, wines_type_map, wines_meta_map)
 
         st.write("")
 
     st.markdown("<div class='yvora-section-head'>Melhor por prato</div>", unsafe_allow_html=True)
     for pid, prato_nome in zip(selected_ids, selected_titles):
-        p_one = filter_pairings_for_single(pairings, pid, prato_nome, available_ids)
-        p_one = apply_text_consistency_filter(p_one, [prato_nome], alias_index)
+        p_one = filter_pairings_exact_single(pairings, pid, prato_nome, available_ids)
 
         if p_one.empty:
             st.markdown(
@@ -1446,53 +939,44 @@ def render_client(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFram
             )
             continue
 
-        render_recos_block(
-            prato_nome,
-            p_one,
-            wines_type_map,
-            wines_meta_map,
-            [prato_nome],
-            alias_index,
-        )
+        render_recos_block(prato_nome, p_one, wines_type_map, wines_meta_map)
 
 
 def render_dm(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFrame):
     st.markdown("<div class='yvora-section-head'>Diagnóstico DM</div>", unsafe_allow_html=True)
     st.markdown(
-        "<div class='yvora-muted'>Leitura rápida da base carregada e dos campos técnicos disponíveis.</div>",
+        "<div class='yvora-muted'>Leitura direta da base carregada e das chaves exatas de consulta.</div>",
         unsafe_allow_html=True,
     )
 
-    st.write(f"Menu hash: `{sheet_hash(menu)}`")
-    st.write(f"Vinhos hash: `{sheet_hash(wines)}`")
-    st.write(f"Pairings hash: `{sheet_hash(pairings)}`")
-
-    wines_dict = wines.to_dict(orient="records")
-    available_ids = {w["id_vinho"] for w in wines_dict if is_wine_available_now(w)}
-    st.write(f"Vinhos disponíveis agora: **{len(available_ids)}**")
-    st.write(f"Linhas de pairings ativas: **{len(pairings)}**")
+    st.write(f"Menu linhas: **{len(menu)}**")
+    st.write(f"Vinhos linhas: **{len(wines)}**")
+    st.write(f"Pairings linhas ativas: **{len(pairings)}**")
 
     debug_cols = [
         "tipo_pairing",
-        "chave_pratos",
         "ids_pratos",
-        "ids_pratos_key",
+        "ids_key",
         "nomes_pratos",
-        "nomes_pratos_key",
+        "names_key",
         "dish_count",
         "id_vinho",
         "nome_vinho",
         "ordem_recomendacao",
         "score_harmonizacao",
-        "score_ord",
         "ativo",
+        "frase_mesa",
+        "por_que_carne",
+        "por_que_queijo",
+        "por_que_combo",
     ]
+
     for c in debug_cols:
         if c not in pairings.columns:
             pairings[c] = ""
 
     st.dataframe(
-        pairings[debug_cols].sort_values(["nomes_pratos", "score_ord"], ascending=[True, False]),
+        pairings[debug_cols].sort_values(["nomes_pratos", "nome_vinho"], ascending=[True, True]),
         use_container_width=True,
     )
 

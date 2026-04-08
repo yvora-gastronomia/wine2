@@ -94,16 +94,6 @@ def to_int(x, default: int = 0) -> int:
         return default
 
 
-def to_float(x) -> Optional[float]:
-    s = norm_text(x).replace("R$", "").replace(".", "").replace(",", ".").strip()
-    if not s:
-        return None
-    try:
-        return float(s)
-    except Exception:
-        return None
-
-
 def safe_numeric_series(series: pd.Series) -> pd.Series:
     return pd.to_numeric(
         series.astype(str)
@@ -202,7 +192,6 @@ def load_csv_from_url(url: str, source_name: str = "SHEET") -> pd.DataFrame:
         try:
             r = requests.get(export_url, headers=headers, timeout=30)
             r.raise_for_status()
-
             csv_text = _decode_csv_bytes(r.content)
 
             if not csv_text.strip():
@@ -441,6 +430,37 @@ def set_page_style():
     st.markdown(css, unsafe_allow_html=True)
 
 
+def _signal_box(label: str, value: str, sub: str):
+    st.markdown(
+        f"""
+        <div class="yvora-signal-box">
+          <div class="yvora-signal-label">{label}</div>
+          <div class="yvora-signal-value">{value}</div>
+          <div class="yvora-signal-sub">{sub}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def score_to_stars(score_raw: str) -> int:
+    score = to_int(score_raw, 0)
+    if score >= 90:
+        return 5
+    if score >= 80:
+        return 4
+    if score >= 70:
+        return 3
+    if score >= 60:
+        return 2
+    return 1
+
+
+def render_star_string(n: int) -> str:
+    n = max(1, min(5, n))
+    return "★" * n + "☆" * (5 - n)
+
+
 def split_combo_names(s: str) -> List[str]:
     raw = clean_display_text(s)
     if not raw:
@@ -453,7 +473,7 @@ def pairings_from_csv(pair_df: pd.DataFrame) -> pd.DataFrame:
     p = pair_df.copy()
     p.columns = [str(c).strip().lower() for c in p.columns]
 
-    needed_defaults = {
+    defaults = {
         "tipo_pairing": "",
         "nomes_pratos": "",
         "id_vinho": "",
@@ -475,7 +495,7 @@ def pairings_from_csv(pair_df: pd.DataFrame) -> pd.DataFrame:
         "ativo": "",
     }
 
-    for c, default in needed_defaults.items():
+    for c, default in defaults.items():
         if c not in p.columns:
             p[c] = default
 
@@ -483,17 +503,25 @@ def pairings_from_csv(pair_df: pd.DataFrame) -> pd.DataFrame:
         if p[c].dtype == object:
             p[c] = p[c].apply(clean_display_text)
 
+    p["tipo_pairing"] = p["tipo_pairing"].str.lower().str.strip()
+
     if "ativo" in p.columns:
-        p["ativo_num"] = p["ativo"].apply(lambda x: 1 if norm_text(x).lower() in ["1", "1.0", "true", "sim"] else 0)
+        p["ativo_num"] = p["ativo"].apply(
+            lambda x: 1 if norm_text(x).lower() in ["1", "1.0", "true", "sim"] else 0
+        )
+        # Se a coluna existir mas vier toda vazia ou inválida, não derruba a base
+        if p["ativo_num"].sum() > 0:
+            p = p[p["ativo_num"] == 1].copy()
+        else:
+            p["ativo_num"] = 1
     else:
         p["ativo_num"] = 1
 
-    p = p[p["ativo_num"] == 1].copy()
-
-    p["tipo_pairing"] = p["tipo_pairing"].str.lower().str.strip()
     p["nomes_pratos_key"] = p["nomes_pratos"].apply(normalize_for_key)
     p["combo_names_list"] = p["nomes_pratos"].apply(split_combo_names)
-    p["combo_names_key"] = p["combo_names_list"].apply(lambda xs: "|".join(sorted([normalize_for_key(x) for x in xs if normalize_for_key(x)])))
+    p["combo_names_key"] = p["combo_names_list"].apply(
+        lambda xs: "|".join(sorted([normalize_for_key(x) for x in xs if normalize_for_key(x)]))
+    )
 
     p["score_ord"] = safe_numeric_series(p["score_harmonizacao"]).fillna(0)
     p["ordem_ord"] = safe_numeric_series(p["ordem_recomendacao"]).fillna(999)
@@ -529,8 +557,7 @@ def wines_from_csv(wines_df: pd.DataFrame) -> pd.DataFrame:
     for c in out.columns:
         out[c] = out[c].apply(clean_display_text)
 
-    out = out[out["nome_vinho"] != ""].copy()
-    return out.drop_duplicates(subset=["id_vinho", "nome_vinho"])
+    return out[out["nome_vinho"] != ""].drop_duplicates(subset=["id_vinho", "nome_vinho"])
 
 
 def sort_pairings_subset(p_subset: pd.DataFrame) -> pd.DataFrame:
@@ -610,11 +637,7 @@ def render_exact_text_block(row: Dict):
             st.write(por_que_vale or "-")
 
 
-def render_recos_block(
-    title: str,
-    p_subset: pd.DataFrame,
-    wines_meta_map: Dict[str, Dict[str, str]],
-):
+def render_recos_block(title: str, p_subset: pd.DataFrame, wines_meta_map: Dict[str, Dict[str, str]]):
     st.markdown("<div class='yvora-card'>", unsafe_allow_html=True)
     st.markdown(f"<div class='yvora-card-title'>{title}</div>", unsafe_allow_html=True)
     st.markdown(
@@ -685,13 +708,22 @@ def header_area():
 def render_client(pairings: pd.DataFrame, wines: pd.DataFrame):
     st.markdown("<div class='yvora-section-head'>Escolha seus pratos</div>", unsafe_allow_html=True)
 
+    prato_rows = pairings[pairings["tipo_pairing"] == "prato"].copy()
     single_dishes = (
-        pairings[pairings["tipo_pairing"] == "prato"]["nomes_pratos"]
+        prato_rows["nomes_pratos"]
         .dropna()
         .astype(str)
+        .map(clean_display_text)
         .tolist()
     )
-    single_dishes = sorted(set([clean_display_text(x) for x in single_dishes if clean_display_text(x)]))
+    single_dishes = sorted(set([x for x in single_dishes if x]))
+
+    if not single_dishes:
+        st.markdown(
+            "<div class='yvora-warn'><b>Nenhum prato foi encontrado no arquivo de pairings.</b><br>Revise as colunas tipo_pairing, nomes_pratos e ativo na exportação da planilha.</div>",
+            unsafe_allow_html=True,
+        )
+        return
 
     selected_names = st.multiselect(
         "Selecione 1 ou 2 pratos",
@@ -736,40 +768,39 @@ def render_client(pairings: pd.DataFrame, wines: pd.DataFrame):
         render_recos_block(dish, p_one, wines_meta_map)
         return
 
-    if len(selected_names) == 2:
-        selected_clean = [clean_display_text(x) for x in selected_names]
-        combo_key = "|".join(sorted([normalize_for_key(x) for x in selected_clean]))
+    selected_clean = [clean_display_text(x) for x in selected_names]
+    combo_key = "|".join(sorted([normalize_for_key(x) for x in selected_clean]))
 
-        p_combo = pairings[
-            (pairings["tipo_pairing"] == "combo") &
-            (pairings["combo_names_key"] == combo_key)
+    p_combo = pairings[
+        (pairings["tipo_pairing"] == "combo") &
+        (pairings["combo_names_key"] == combo_key)
+    ].copy()
+
+    if p_combo.empty:
+        st.markdown(
+            "<div class='yvora-warn'><b>Sem recomendação para a combinação agora.</b><br>Não existe linha exata para esta dupla no arquivo de pairings.</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        render_recos_block(" | ".join(selected_clean), p_combo, wines_meta_map)
+
+    st.write("")
+    st.markdown("<div class='yvora-section-head'>Melhor por prato</div>", unsafe_allow_html=True)
+
+    for dish in selected_clean:
+        dish_key = normalize_for_key(dish)
+        p_one = pairings[
+            (pairings["tipo_pairing"] == "prato") &
+            (pairings["nomes_pratos_key"] == dish_key)
         ].copy()
 
-        if p_combo.empty:
+        if p_one.empty:
             st.markdown(
-                "<div class='yvora-warn'><b>Sem recomendação para a combinação agora.</b><br>Não existe linha exata para esta dupla no arquivo de pairings.</div>",
+                f"<div class='yvora-warn'><b>{dish}:</b> não existe linha exata no arquivo de pairings.</div>",
                 unsafe_allow_html=True,
             )
         else:
-            render_recos_block(" | ".join(selected_clean), p_combo, wines_meta_map)
-
-        st.write("")
-        st.markdown("<div class='yvora-section-head'>Melhor por prato</div>", unsafe_allow_html=True)
-
-        for dish in selected_clean:
-            dish_key = normalize_for_key(dish)
-            p_one = pairings[
-                (pairings["tipo_pairing"] == "prato") &
-                (pairings["nomes_pratos_key"] == dish_key)
-            ].copy()
-
-            if p_one.empty:
-                st.markdown(
-                    f"<div class='yvora-warn'><b>{dish}:</b> não existe linha exata no arquivo de pairings.</div>",
-                    unsafe_allow_html=True,
-                )
-            else:
-                render_recos_block(dish, p_one, wines_meta_map)
+            render_recos_block(dish, p_one, wines_meta_map)
 
 
 def render_dm(pairings: pd.DataFrame):
@@ -793,7 +824,10 @@ def render_dm(pairings: pd.DataFrame):
             pairings[c] = ""
 
     st.dataframe(
-        pairings[debug_cols].sort_values(["tipo_pairing", "nomes_pratos", "nome_vinho"], ascending=[True, True, True]),
+        pairings[debug_cols].sort_values(
+            ["tipo_pairing", "nomes_pratos", "nome_vinho"],
+            ascending=[True, True, True],
+        ),
         use_container_width=True,
     )
 

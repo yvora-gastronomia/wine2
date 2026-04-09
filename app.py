@@ -1,5 +1,6 @@
 import io
 import re
+import unicodedata
 from urllib.parse import parse_qs, urlparse
 
 import pandas as pd
@@ -7,9 +8,6 @@ import requests
 import streamlit as st
 
 
-# =========================================================
-# CONFIG BÁSICA
-# =========================================================
 st.set_page_config(
     page_title="YVORA Wine Pairing",
     page_icon="🍷",
@@ -43,10 +41,25 @@ def clean_text(x) -> str:
     return re.sub(r"\s+", " ", norm_text(x)).strip()
 
 
+def strip_accents(s: str) -> str:
+    s = unicodedata.normalize("NFD", s)
+    return "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
+
+
 def normalize_name(x) -> str:
     s = clean_text(x).lower()
+    s = strip_accents(s)
     s = s.replace("–", "-").replace("—", "-")
     s = s.replace("&", " e ")
+    s = s.replace("/", " ")
+    s = s.replace("\\", " ")
+    s = s.replace("(", " ")
+    s = s.replace(")", " ")
+    s = s.replace("[", " ")
+    s = s.replace("]", " ")
+    s = s.replace("{", " ")
+    s = s.replace("}", " ")
+    s = s.replace("-", " ")
     s = re.sub(r"[^\w\s]", " ", s, flags=re.UNICODE)
     s = re.sub(r"\s+", " ", s).strip()
     return s
@@ -86,6 +99,7 @@ def split_names(x) -> list[str]:
     raw = clean_text(x)
     if not raw:
         return []
+
     if "|" in raw:
         parts = raw.split("|")
     elif re.search(r"\s\+\s", raw):
@@ -94,8 +108,9 @@ def split_names(x) -> list[str]:
         parts = raw.split(";")
     else:
         parts = [raw]
-    vals = [normalize_name(p) for p in parts]
-    return [v for v in vals if v]
+
+    vals = [normalize_name(p) for p in parts if normalize_name(p)]
+    return vals
 
 
 def make_ids_key(values: list[str]) -> str:
@@ -108,6 +123,39 @@ def make_names_key(values: list[str]) -> str:
     return "|".join(vals)
 
 
+def tokenize_name(x: str) -> set[str]:
+    s = normalize_name(x)
+    toks = [t for t in s.split() if len(t) >= 3]
+    return set(toks)
+
+
+def name_match_score(a: str, b: str) -> float:
+    sa = tokenize_name(a)
+    sb = tokenize_name(b)
+
+    if not sa or not sb:
+        return 0.0
+
+    inter = len(sa & sb)
+    return inter / max(1, min(len(sa), len(sb)))
+
+
+def names_match_flexible(target_name: str, row_name: str, threshold: float = 0.75) -> bool:
+    a = normalize_name(target_name)
+    b = normalize_name(row_name)
+
+    if not a or not b:
+        return False
+
+    if a == b:
+        return True
+
+    if a in b or b in a:
+        return True
+
+    return name_match_score(a, b) >= threshold
+
+
 def to_int(x, default: int = 0) -> int:
     s = norm_text(x)
     if not s:
@@ -118,8 +166,23 @@ def to_int(x, default: int = 0) -> int:
         return default
 
 
+def score_to_stars(score_raw: str) -> str:
+    score = to_int(score_raw, 0)
+    if score >= 90:
+        n = 5
+    elif score >= 80:
+        n = 4
+    elif score >= 70:
+        n = 3
+    elif score >= 60:
+        n = 2
+    else:
+        n = 1
+    return "★" * n + "☆" * (5 - n)
+
+
 # =========================================================
-# LOAD GOOGLE SHEETS CSV
+# LOAD CSV FROM GOOGLE SHEETS
 # =========================================================
 def extract_sheet_id_and_gid(url: str) -> tuple[str, str]:
     u = norm_text(url)
@@ -209,7 +272,9 @@ def standardize_menu(df: pd.DataFrame) -> pd.DataFrame:
     out["id_prato"] = out["id_prato"].apply(normalize_id)
     out["nome_prato"] = out["nome_prato"].apply(clean_text)
     out["descricao_prato"] = out["descricao_prato"].apply(clean_text)
-    out["ativo_num"] = out["ativo"].apply(lambda x: 1 if norm_text(x).lower() in ["", "1", "1.0", "true", "sim"] else 0)
+    out["ativo_num"] = out["ativo"].apply(
+        lambda x: 1 if norm_text(x).lower() in ["", "1", "1.0", "true", "sim"] else 0
+    )
 
     missing = out["id_prato"].eq("")
     out.loc[missing, "id_prato"] = out.loc[missing, "nome_prato"]
@@ -248,7 +313,9 @@ def standardize_wines(df: pd.DataFrame) -> pd.DataFrame:
     out["nome_vinho"] = out["nome_vinho"].apply(clean_text)
     out["preco"] = out["preco"].apply(clean_text)
     out["estoque_num"] = out["estoque"].apply(to_int)
-    out["ativo_num"] = out["ativo"].apply(lambda x: 1 if norm_text(x).lower() in ["", "1", "1.0", "true", "sim"] else 0)
+    out["ativo_num"] = out["ativo"].apply(
+        lambda x: 1 if norm_text(x).lower() in ["", "1", "1.0", "true", "sim"] else 0
+    )
     out["tipo_vinho"] = out["tipo_vinho"].apply(clean_text)
     out["perfil_vinho"] = out["perfil_vinho"].apply(clean_text)
     out["country"] = out["country"].apply(clean_text)
@@ -290,7 +357,9 @@ def standardize_pairings(df: pd.DataFrame) -> pd.DataFrame:
             raw[c] = d
 
     out = raw.copy()
-    out["ativo_num"] = out["ativo"].apply(lambda x: 1 if norm_text(x).lower() in ["", "1", "1.0", "true", "sim"] else 0)
+    out["ativo_num"] = out["ativo"].apply(
+        lambda x: 1 if norm_text(x).lower() in ["", "1", "1.0", "true", "sim"] else 0
+    )
     out = out[out["ativo_num"] == 1].copy()
 
     out["ids_list"] = out["ids_pratos"].apply(split_ids)
@@ -310,18 +379,77 @@ def standardize_pairings(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # =========================================================
-# MATCH
+# MATCH RULES
 # =========================================================
+def filter_available(pairings_subset: pd.DataFrame, wines: pd.DataFrame) -> pd.DataFrame:
+    if pairings_subset.empty:
+        return pairings_subset.copy()
+
+    available_ids = set(
+        wines[
+            (wines["ativo_num"] == 1) &
+            (wines["estoque_num"] > 0)
+        ]["id_vinho"].astype(str).tolist()
+    )
+
+    if not available_ids:
+        return pairings_subset.copy()
+
+    return pairings_subset[pairings_subset["id_vinho"].isin(available_ids)].copy()
+
+
 def get_single_pairings(pairings: pd.DataFrame, prato_id: str, prato_nome: str) -> pd.DataFrame:
     id_key = make_ids_key([prato_id])
     name_key = make_names_key([prato_nome])
 
-    by_id = pairings[(pairings["dish_count"] == 1) & (pairings["ids_key"] == id_key)].copy()
+    # 1) exato por ID
+    by_id = pairings[
+        (pairings["dish_count"] == 1) &
+        (pairings["ids_key"] == id_key)
+    ].copy()
     if not by_id.empty:
         return by_id
 
-    by_name = pairings[(pairings["dish_count"] == 1) & (pairings["names_key"] == name_key)].copy()
-    return by_name
+    # 2) exato por nome normalizado
+    by_name = pairings[
+        (pairings["dish_count"] == 1) &
+        (pairings["names_key"] == name_key)
+    ].copy()
+    if not by_name.empty:
+        return by_name
+
+    # 3) flexível por nome
+    candidates = pairings[pairings["dish_count"] == 1].copy()
+    if candidates.empty:
+        return candidates
+
+    mask = candidates["nomes_pratos"].apply(lambda x: names_match_flexible(prato_nome, x))
+    return candidates[mask].copy()
+
+
+def combo_names_match_flexible(target_names: list[str], row_names_raw: str) -> bool:
+    row_parts = split_names(row_names_raw)
+    if not row_parts:
+        return False
+
+    target_norm = [normalize_name(x) for x in target_names if normalize_name(x)]
+    matched = 0
+    used = set()
+
+    for target in target_norm:
+        found = False
+        for i, row_part in enumerate(row_parts):
+            if i in used:
+                continue
+            if names_match_flexible(target, row_part):
+                used.add(i)
+                matched += 1
+                found = True
+                break
+        if not found:
+            return False
+
+    return matched == len(target_norm)
 
 
 def get_combo_pairings(pairings: pd.DataFrame, prato_ids: list[str], prato_nomes: list[str]) -> pd.DataFrame:
@@ -329,26 +457,29 @@ def get_combo_pairings(pairings: pd.DataFrame, prato_ids: list[str], prato_nomes
     name_key = make_names_key(prato_nomes)
     target_count = len([x for x in prato_ids if normalize_id(x)]) or len(prato_nomes)
 
-    by_id = pairings[(pairings["dish_count"] == target_count) & (pairings["ids_key"] == id_key)].copy()
+    # 1) exato por ID
+    by_id = pairings[
+        (pairings["dish_count"] == target_count) &
+        (pairings["ids_key"] == id_key)
+    ].copy()
     if not by_id.empty:
         return by_id
 
-    by_name = pairings[(pairings["dish_count"] == target_count) & (pairings["names_key"] == name_key)].copy()
-    return by_name
+    # 2) exato por nome
+    by_name = pairings[
+        (pairings["dish_count"] == target_count) &
+        (pairings["names_key"] == name_key)
+    ].copy()
+    if not by_name.empty:
+        return by_name
 
+    # 3) flexível por nome
+    candidates = pairings[pairings["dish_count"] == target_count].copy()
+    if candidates.empty:
+        return candidates
 
-def filter_available(pairings_subset: pd.DataFrame, wines: pd.DataFrame) -> pd.DataFrame:
-    if pairings_subset.empty:
-        return pairings_subset.copy()
-
-    available_ids = set(
-        wines[(wines["ativo_num"] == 1) & (wines["estoque_num"] > 0)]["id_vinho"].astype(str).tolist()
-    )
-
-    if not available_ids:
-        return pairings_subset.copy()
-
-    return pairings_subset[pairings_subset["id_vinho"].isin(available_ids)].copy()
+    mask = candidates["nomes_pratos"].apply(lambda x: combo_names_match_flexible(prato_nomes, x))
+    return candidates[mask].copy()
 
 
 # =========================================================
@@ -386,11 +517,10 @@ def render_header() -> None:
 def render_pairing_block(title: str, df: pd.DataFrame, wines_meta: dict) -> None:
     st.subheader(title)
 
-    df = df.head(2)
-
-    for _, row in df.iterrows():
+    for _, row in df.head(2).iterrows():
         row = row.to_dict()
         meta = wines_meta.get(row.get("id_vinho", ""), {})
+
         with st.container(border=True):
             st.markdown(f"**{clean_text(row.get('nome_vinho', ''))}**")
 
@@ -398,8 +528,11 @@ def render_pairing_block(title: str, df: pd.DataFrame, wines_meta: dict) -> None
             if origem:
                 st.caption(origem)
 
-            st.write("**Estratégia**")
-            st.write(clean_text(row.get("estrategia_harmonizacao", "")) or "-")
+            c1, c2 = st.columns(2)
+            c1.write("**Score**")
+            c1.write(score_to_stars(row.get("score_harmonizacao", "")))
+            c2.write("**Estratégia**")
+            c2.write(clean_text(row.get("estrategia_harmonizacao", "")) or "-")
 
             st.write("**Papel do vinho**")
             st.write(clean_text(row.get("papel_do_vinho", "")) or "-")
@@ -421,23 +554,21 @@ def render_pairing_block(title: str, df: pd.DataFrame, wines_meta: dict) -> None
 
 
 def render_client(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFrame) -> None:
+    st.markdown("### Escolha seus pratos")
+
     selected_names = st.multiselect(
         "Escolha seus pratos",
         options=menu["nome_prato"].tolist(),
         max_selections=2,
         placeholder="Digite para buscar no menu",
         key="selected_pratos",
+        label_visibility="collapsed",
     )
 
     if not selected_names:
-        st.info("Selecione ao menos 1 prato.")
         return
 
     selected = menu[menu["nome_prato"].isin(selected_names)].copy()
-    if selected.empty:
-        st.warning("Nenhum prato válido encontrado no MENU.")
-        return
-
     selected_ids = selected["id_prato"].tolist()
     selected_titles = selected["nome_prato"].tolist()
 
@@ -490,20 +621,25 @@ def render_dm(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFrame) -
             by_id = pairings[(pairings["dish_count"] == 1) & (pairings["ids_key"] == id_key)].copy()
             by_name = pairings[(pairings["dish_count"] == 1) & (pairings["names_key"] == name_key)].copy()
 
+            candidates = pairings[pairings["dish_count"] == 1].copy()
+            by_flex = candidates[candidates["nomes_pratos"].apply(lambda x: names_match_flexible(prato_nome, x))].copy()
+
             st.write({
                 "prato_nome": prato_nome,
                 "id_prato": prato_id,
                 "ids_key": id_key,
                 "names_key": name_key,
                 "matches_por_id": len(by_id),
-                "matches_por_nome": len(by_name),
+                "matches_por_nome_exato": len(by_name),
+                "matches_por_nome_flex": len(by_flex),
             })
 
-    debug_cols = ["ids_pratos", "ids_key", "nomes_pratos", "names_key", "dish_count", "id_vinho", "nome_vinho"]
-    for c in debug_cols:
-        if c not in pairings.columns:
-            pairings[c] = ""
-    st.dataframe(pairings[debug_cols], use_container_width=True)
+            if not by_id.empty:
+                st.dataframe(by_id[["ids_pratos", "ids_key", "nomes_pratos", "names_key", "id_vinho", "nome_vinho"]], use_container_width=True)
+            elif not by_name.empty:
+                st.dataframe(by_name[["ids_pratos", "ids_key", "nomes_pratos", "names_key", "id_vinho", "nome_vinho"]], use_container_width=True)
+            elif not by_flex.empty:
+                st.dataframe(by_flex[["ids_pratos", "ids_key", "nomes_pratos", "names_key", "id_vinho", "nome_vinho"]], use_container_width=True)
 
 
 # =========================================================

@@ -7,9 +7,20 @@ import requests
 import streamlit as st
 
 
-APP_TITLE = "YVORA Wine Pairing"
+# =========================================================
+# CONFIG BÁSICA
+# =========================================================
+st.set_page_config(
+    page_title="YVORA Wine Pairing",
+    page_icon="🍷",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
 
+# =========================================================
+# HELPERS
+# =========================================================
 def get_secret(key: str, default: str = "") -> str:
     try:
         return st.secrets.get(key, default)
@@ -45,16 +56,20 @@ def normalize_id(x) -> str:
     s = norm_text(x).replace(",", ".")
     if not s:
         return ""
+
     m = re.search(r"[A-Za-z0-9]+(?:\.[0-9]+)?", s)
     if not m:
         return ""
+
     token = m.group(0)
+
     try:
         f = float(token)
         if f.is_integer():
             return str(int(f))
     except Exception:
         pass
+
     return token.strip()
 
 
@@ -103,6 +118,9 @@ def to_int(x, default: int = 0) -> int:
         return default
 
 
+# =========================================================
+# LOAD GOOGLE SHEETS CSV
+# =========================================================
 def extract_sheet_id_and_gid(url: str) -> tuple[str, str]:
     u = norm_text(url)
     parsed = urlparse(u)
@@ -119,6 +137,7 @@ def extract_sheet_id_and_gid(url: str) -> tuple[str, str]:
     m = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", u)
     if not m:
         return "", gid
+
     return m.group(1), gid
 
 
@@ -144,19 +163,26 @@ def load_csv_from_url(url: str, source_name: str) -> pd.DataFrame:
             r = requests.get(export_url, headers=headers, timeout=30)
             r.raise_for_status()
             text = r.content.decode("utf-8-sig", errors="replace")
+
             if not text.strip():
                 last_error = ValueError(f"{source_name}: retorno vazio.")
                 continue
+
             if text.lstrip().lower().startswith("<html"):
                 last_error = ValueError(f"{source_name}: Google retornou HTML em vez de CSV.")
                 continue
+
             return pd.read_csv(io.StringIO(text), dtype=str, keep_default_na=False)
+
         except Exception as e:
             last_error = e
 
     raise ValueError(f"Falha ao carregar {source_name}: {last_error}")
 
 
+# =========================================================
+# STANDARDIZE DATA
+# =========================================================
 def pick_col(df: pd.DataFrame, options: list[str]) -> str:
     cols = [str(c).strip().lower() for c in df.columns]
     for opt in options:
@@ -183,7 +209,7 @@ def standardize_menu(df: pd.DataFrame) -> pd.DataFrame:
     out["id_prato"] = out["id_prato"].apply(normalize_id)
     out["nome_prato"] = out["nome_prato"].apply(clean_text)
     out["descricao_prato"] = out["descricao_prato"].apply(clean_text)
-    out["ativo_num"] = out["ativo"].apply(lambda x: 1 if norm_text(x).lower() in ["1", "1.0", "true", "sim"] else 0)
+    out["ativo_num"] = out["ativo"].apply(lambda x: 1 if norm_text(x).lower() in ["", "1", "1.0", "true", "sim"] else 0)
 
     missing = out["id_prato"].eq("")
     out.loc[missing, "id_prato"] = out.loc[missing, "nome_prato"]
@@ -202,7 +228,7 @@ def standardize_wines(df: pd.DataFrame) -> pd.DataFrame:
     c_price = pick_col(raw, ["price", "preco", "preço", "valor"])
     c_stock = pick_col(raw, ["estoque", "stock", "qtd", "quantidade"])
     c_active = pick_col(raw, ["active", "ativo", "status"])
-    c_type = pick_col(raw, ["tipo", "cor", "estilo", "wine_type", "type", "categoria", "tipo_vinho_padrao"])
+    c_type = pick_col(raw, ["tipo", "cor", "estilo", "wine_type", "type", "categoria"])
     c_profile = pick_col(raw, ["perfil_vinho", "style", "perfil"])
     c_country = pick_col(raw, ["country", "pais"])
     c_region = pick_col(raw, ["region", "regiao"])
@@ -222,7 +248,7 @@ def standardize_wines(df: pd.DataFrame) -> pd.DataFrame:
     out["nome_vinho"] = out["nome_vinho"].apply(clean_text)
     out["preco"] = out["preco"].apply(clean_text)
     out["estoque_num"] = out["estoque"].apply(to_int)
-    out["ativo_num"] = out["ativo"].apply(lambda x: 1 if norm_text(x).lower() in ["1", "1.0", "true", "sim"] else 0)
+    out["ativo_num"] = out["ativo"].apply(lambda x: 1 if norm_text(x).lower() in ["", "1", "1.0", "true", "sim"] else 0)
     out["tipo_vinho"] = out["tipo_vinho"].apply(clean_text)
     out["perfil_vinho"] = out["perfil_vinho"].apply(clean_text)
     out["country"] = out["country"].apply(clean_text)
@@ -267,17 +293,14 @@ def standardize_pairings(df: pd.DataFrame) -> pd.DataFrame:
     out["ativo_num"] = out["ativo"].apply(lambda x: 1 if norm_text(x).lower() in ["", "1", "1.0", "true", "sim"] else 0)
     out = out[out["ativo_num"] == 1].copy()
 
-    out["ids_list"] = out["ids_pratos"].apply(split_ids_tokens)
+    out["ids_list"] = out["ids_pratos"].apply(split_ids)
     out["ids_key"] = out["ids_list"].apply(make_ids_key)
 
-    out["names_list"] = out["nomes_pratos"].apply(split_name_tokens)
+    out["names_list"] = out["nomes_pratos"].apply(split_names)
     out["names_key"] = out["names_list"].apply(make_names_key)
 
     out["dish_count"] = out["ids_list"].apply(len)
     out.loc[out["dish_count"] == 0, "dish_count"] = out["names_list"].apply(len)
-
-    out["score_ord"] = safe_numeric_series(out["score_harmonizacao"]).fillna(0)
-    out["ordem_ord"] = safe_numeric_series(out["ordem_recomendacao"]).fillna(999)
 
     for c in out.columns:
         if out[c].dtype == object:
@@ -286,6 +309,9 @@ def standardize_pairings(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+# =========================================================
+# MATCH
+# =========================================================
 def get_single_pairings(pairings: pd.DataFrame, prato_id: str, prato_nome: str) -> pd.DataFrame:
     id_key = make_ids_key([prato_id])
     name_key = make_names_key([prato_nome])
@@ -325,52 +351,24 @@ def filter_available(pairings_subset: pd.DataFrame, wines: pd.DataFrame) -> pd.D
     return pairings_subset[pairings_subset["id_vinho"].isin(available_ids)].copy()
 
 
-def score_to_stars(score_raw: str) -> str:
-    score = to_int(score_raw, 0)
-    if score >= 90:
-        n = 5
-    elif score >= 80:
-        n = 4
-    elif score >= 70:
-        n = 3
-    elif score >= 60:
-        n = 2
-    else:
-        n = 1
-    return "★" * n + "☆" * (5 - n)
+# =========================================================
+# UI
+# =========================================================
+def render_sidebar() -> None:
+    st.sidebar.title("YVORA")
+    st.sidebar.caption("Meat & Cheese Lab")
 
+    if "dm" not in st.session_state:
+        st.session_state.dm = False
 
-def render_logo() -> None:
-    logo_url = get_secret("LOGO_URL", "")
-    try:
-        if LOGO_LOCAL_PATH.exists():
-            st.sidebar.image(str(LOGO_LOCAL_PATH), use_container_width=True)
-            return
-    except Exception:
-        pass
-
-    if logo_url:
-        try:
-            r = requests.get(logo_url, timeout=20)
-            r.raise_for_status()
-            st.sidebar.image(r.content, use_container_width=True)
-            return
-        except Exception:
-            pass
-
-
-def render_sidebar(dm_on: bool) -> None:
-    render_logo()
-    st.sidebar.caption("YVORA | Meat & Cheese Lab")
     st.sidebar.markdown("### Acesso DM")
-
-    if dm_on:
+    if st.session_state.dm:
         st.sidebar.success("Modo DM ativo")
         if st.sidebar.button("Sair do DM", use_container_width=True):
             st.session_state.dm = False
             st.rerun()
     else:
-        pwd = st.sidebar.text_input("Senha", type="password", placeholder="Digite a senha do DM")
+        pwd = st.sidebar.text_input("Senha", type="password")
         if st.sidebar.button("Entrar", use_container_width=True):
             admin_password = get_secret("ADMIN_PASSWORD", "")
             if pwd and admin_password and pwd == admin_password:
@@ -385,49 +383,37 @@ def render_header() -> None:
     st.caption("Escolha até 2 pratos para ver a recomendação de vinho.")
 
 
-def render_pairing_cards(title: str, df: pd.DataFrame, wines_meta: Dict[str, Dict[str, str]]) -> None:
+def render_pairing_block(title: str, df: pd.DataFrame, wines_meta: dict) -> None:
     st.subheader(title)
-
-    df = df.copy()
-    has_order = (df["ordem_ord"] < 999).any()
-
-    if has_order:
-        df = df.sort_values(["ordem_ord", "score_ord", "nome_vinho"], ascending=[True, False, True])
-    else:
-        df = df.sort_values(["score_ord", "nome_vinho"], ascending=[False, True])
 
     df = df.head(2)
 
-    for i, (_, row) in enumerate(df.iterrows(), start=1):
+    for _, row in df.iterrows():
         row = row.to_dict()
         meta = wines_meta.get(row.get("id_vinho", ""), {})
         with st.container(border=True):
-            st.markdown(f"**{i}ª opção • {clean_text(row.get('nome_vinho', ''))}**")
+            st.markdown(f"**{clean_text(row.get('nome_vinho', ''))}**")
+
             origem = " • ".join([x for x in [meta.get("country", ""), meta.get("region", "")] if clean_text(x)])
             if origem:
                 st.caption(origem)
 
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Score", score_to_stars(row.get("score_harmonizacao", "")))
-            c2.write("**Estratégia**")
-            c2.write(clean_text(row.get("estrategia_harmonizacao", "")) or "-")
-            c3.write("**Papel do vinho**")
-            c3.write(clean_text(row.get("papel_do_vinho", "")) or "-")
+            st.write("**Estratégia**")
+            st.write(clean_text(row.get("estrategia_harmonizacao", "")) or "-")
+
+            st.write("**Papel do vinho**")
+            st.write(clean_text(row.get("papel_do_vinho", "")) or "-")
 
             if clean_text(row.get("frase_mesa", "")):
                 st.info(clean_text(row.get("frase_mesa", "")))
 
-            if clean_text(row.get("motivo_score", "")):
-                st.write("**Motivo técnico**")
-                st.write(clean_text(row.get("motivo_score", "")))
-
-            c4, c5, c6 = st.columns(3)
-            c4.write("**Carne**")
-            c4.write(clean_text(row.get("por_que_carne", "")) or "-")
-            c5.write("**Queijo**")
-            c5.write(clean_text(row.get("por_que_queijo", "")) or "-")
-            c6.write("**Conjunto**")
-            c6.write(clean_text(row.get("por_que_combo", "")) or "-")
+            col1, col2, col3 = st.columns(3)
+            col1.write("**Carne**")
+            col1.write(clean_text(row.get("por_que_carne", "")) or "-")
+            col2.write("**Queijo**")
+            col2.write(clean_text(row.get("por_que_queijo", "")) or "-")
+            col3.write("**Conjunto**")
+            col3.write(clean_text(row.get("por_que_combo", "")) or "-")
 
             if clean_text(row.get("por_que_vale", "")):
                 st.write("**Valor da escolha**")
@@ -472,7 +458,7 @@ def render_client(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFram
         if combo_rows.empty:
             st.warning("Não existe recomendação exata para esta dupla.")
         else:
-            render_pairing_cards("Sugestão para a combinação", combo_rows, wines_meta)
+            render_pairing_block("Sugestão para a combinação", combo_rows, wines_meta)
 
         st.write("")
 
@@ -483,12 +469,11 @@ def render_client(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFram
         if single_rows.empty:
             st.warning(f"{pname}: não existe linha individual correspondente no pairings.")
         else:
-            render_pairing_cards(f"Melhor por prato • {pname}", single_rows, wines_meta)
+            render_pairing_block(f"Melhor por prato • {pname}", single_rows, wines_meta)
 
 
 def render_dm(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFrame) -> None:
     st.subheader("Diagnóstico DM")
-
     st.write(f"MENU: {len(menu)} linhas")
     st.write(f"WINES: {len(wines)} linhas")
     st.write(f"PAIRINGS: {len(pairings)} linhas")
@@ -498,25 +483,21 @@ def render_dm(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFrame) -
         for _, row in selected.iterrows():
             prato_id = row["id_prato"]
             prato_nome = row["nome_prato"]
-            target_ids_key = make_ids_key([prato_id])
-            target_names_key = make_names_key([prato_nome])
 
-            by_id = pairings[(pairings["dish_count"] == 1) & (pairings["ids_key"] == target_ids_key)].copy()
-            by_name = pairings[(pairings["dish_count"] == 1) & (pairings["names_key"] == target_names_key)].copy()
+            id_key = make_ids_key([prato_id])
+            name_key = make_names_key([prato_nome])
+
+            by_id = pairings[(pairings["dish_count"] == 1) & (pairings["ids_key"] == id_key)].copy()
+            by_name = pairings[(pairings["dish_count"] == 1) & (pairings["names_key"] == name_key)].copy()
 
             st.write({
                 "prato_nome": prato_nome,
                 "id_prato": prato_id,
-                "target_ids_key": target_ids_key,
-                "target_names_key": target_names_key,
+                "ids_key": id_key,
+                "names_key": name_key,
                 "matches_por_id": len(by_id),
                 "matches_por_nome": len(by_name),
             })
-
-            if not by_id.empty:
-                st.dataframe(by_id[["ids_pratos", "ids_key", "nomes_pratos", "names_key", "id_vinho", "nome_vinho"]], use_container_width=True)
-            elif not by_name.empty:
-                st.dataframe(by_name[["ids_pratos", "ids_key", "nomes_pratos", "names_key", "id_vinho", "nome_vinho"]], use_container_width=True)
 
     debug_cols = ["ids_pratos", "ids_key", "nomes_pratos", "names_key", "dish_count", "id_vinho", "nome_vinho"]
     for c in debug_cols:
@@ -525,13 +506,11 @@ def render_dm(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFrame) -
     st.dataframe(pairings[debug_cols], use_container_width=True)
 
 
+# =========================================================
+# MAIN
+# =========================================================
 def main() -> None:
-    set_page_style()
-
-    if "dm" not in st.session_state:
-        st.session_state.dm = False
-
-    render_sidebar(bool(st.session_state.dm))
+    render_sidebar()
     render_header()
 
     try:
@@ -546,19 +525,19 @@ def main() -> None:
         if not pairings_url:
             raise ValueError("PAIRINGS_SHEET_URL não configurado.")
 
-        menu_df = load_csv_from_url(menu_url, "MENU")
-        wines_df = load_csv_from_url(wines_url, "WINES")
-        pairings_df = load_csv_from_url(pairings_url, "PAIRINGS")
+        menu_raw = load_csv_from_url(menu_url, "MENU")
+        wines_raw = load_csv_from_url(wines_url, "WINES")
+        pairings_raw = load_csv_from_url(pairings_url, "PAIRINGS")
 
-        menu = standardize_menu(menu_df)
-        wines = standardize_wines(wines_df)
-        pairings = standardize_pairings(pairings_df)
+        menu = standardize_menu(menu_raw)
+        wines = standardize_wines(wines_raw)
+        pairings = standardize_pairings(pairings_raw)
 
     except Exception as e:
         st.error(f"Erro ao carregar dados: {e}")
         st.stop()
 
-    if st.session_state.dm:
+    if st.session_state.get("dm", False):
         render_dm(menu, wines, pairings)
     else:
         render_client(menu, wines, pairings)

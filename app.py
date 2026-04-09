@@ -1,6 +1,7 @@
 import io
 import re
 import unicodedata
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import pandas as pd
@@ -8,12 +9,218 @@ import requests
 import streamlit as st
 
 
-st.set_page_config(
-    page_title="YVORA Wine Pairing",
-    page_icon="🍷",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+APP_TITLE = "YVORA Wine Pairing"
+
+BRAND_BG = "#EFE7DD"
+BRAND_BLUE = "#0E2A47"
+BRAND_MUTED = "#6B7785"
+BRAND_CARD = "#F5EFE7"
+BRAND_WARN = "#F3D6CF"
+BRAND_SOFT = "#F8F4EE"
+BRAND_WHITE = "#FFFFFF"
+
+BASE_DIR = Path(__file__).resolve().parent
+POSSIBLE_LOGOS = [
+    BASE_DIR / "yvora_logo.png",
+    BASE_DIR / "assets" / "yvora_logo.png",
+]
+LOGO_LOCAL_PATH = next((p for p in POSSIBLE_LOGOS if p.exists()), POSSIBLE_LOGOS[0])
+
+
+# =========================================================
+# PAGE STYLE
+# =========================================================
+def set_page_style() -> None:
+    st.set_page_config(
+        page_title=APP_TITLE,
+        page_icon="🍷",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
+
+    css = f"""
+    <style>
+    .stApp {{
+        background: linear-gradient(180deg, {BRAND_BG} 0%, #FBF8F3 100%);
+    }}
+
+    [data-testid="stSidebar"] {{
+        background: linear-gradient(180deg, rgba(14,42,71,0.98) 0%, rgba(14,42,71,0.94) 100%);
+        border-right: 1px solid rgba(255,255,255,0.08);
+    }}
+
+    [data-testid="stSidebar"] * {{
+        color: {BRAND_WHITE};
+    }}
+
+    .block-container {{
+        padding-top: 1.2rem;
+        padding-bottom: 2rem;
+    }}
+
+    .yvora-shell {{
+        max-width: 1240px;
+        margin: 0 auto;
+    }}
+
+    .yvora-hero {{
+        background: linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(245,239,231,0.95) 100%);
+        border: 1px solid rgba(14,42,71,0.08);
+        box-shadow: 0 14px 36px rgba(14,42,71,0.08);
+        border-radius: 26px;
+        padding: 22px;
+        margin-bottom: 18px;
+    }}
+
+    .yvora-title {{
+        color: {BRAND_BLUE};
+        font-size: 2.15rem;
+        font-weight: 800;
+        margin: 0;
+    }}
+
+    .yvora-subtitle {{
+        color: {BRAND_MUTED};
+        font-size: 1rem;
+        line-height: 1.45rem;
+        margin-top: 8px;
+        max-width: 700px;
+    }}
+
+    .yvora-card {{
+        background: linear-gradient(180deg, {BRAND_CARD} 0%, {BRAND_SOFT} 100%);
+        border-radius: 22px;
+        padding: 18px 18px 14px 18px;
+        border: 1px solid rgba(14,42,71,0.08);
+        margin-bottom: 18px;
+        box-shadow: 0 10px 28px rgba(14,42,71,0.05);
+    }}
+
+    .yvora-card-title {{
+        font-size: 1.28rem;
+        font-weight: 800;
+        color: {BRAND_BLUE};
+        margin-bottom: 4px;
+    }}
+
+    .yvora-card-sub, .yvora-mini {{
+        color: {BRAND_MUTED};
+    }}
+
+    .yvora-card-sub {{
+        font-size: 0.93rem;
+        margin-bottom: 10px;
+    }}
+
+    .yvora-section-head {{
+        color: {BRAND_BLUE};
+        font-size: 1.02rem;
+        font-weight: 800;
+        margin: 6px 0 8px 0;
+    }}
+
+    .yvora-warn {{
+        background: {BRAND_WARN};
+        border-radius: 14px;
+        padding: 14px 16px;
+        border: 1px solid rgba(14,42,71,0.08);
+        color: {BRAND_BLUE};
+        white-space: pre-wrap;
+    }}
+
+    .yvora-chip {{
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 11px;
+        border-radius: 999px;
+        border: 1px solid rgba(14,42,71,0.12);
+        color: {BRAND_BLUE};
+        font-size: 0.82rem;
+        font-weight: 600;
+        margin-right: 7px;
+        margin-top: 6px;
+        background: rgba(255,255,255,0.8);
+        white-space: nowrap;
+    }}
+
+    .yvora-quote {{
+        background: rgba(255,255,255,0.86);
+        border: 1px solid rgba(14,42,71,0.08);
+        border-radius: 16px;
+        padding: 14px 15px;
+        margin: 14px 0 12px 0;
+        color: {BRAND_BLUE};
+        font-weight: 700;
+        font-size: 1rem;
+        line-height: 1.45rem;
+    }}
+
+    .yvora-context {{
+        background: rgba(255,255,255,0.78);
+        border: 1px solid rgba(14,42,71,0.08);
+        border-radius: 18px;
+        padding: 15px;
+        margin: 12px 0;
+        color: {BRAND_BLUE};
+        font-size: 0.95rem;
+        line-height: 1.5rem;
+    }}
+
+    .yvora-signal-box {{
+        background: rgba(255,255,255,0.78);
+        border: 1px solid rgba(14,42,71,0.08);
+        border-radius: 16px;
+        padding: 12px;
+        min-height: 72px;
+        height: 100%;
+    }}
+
+    .yvora-signal-label {{
+        color: {BRAND_MUTED};
+        font-size: 0.76rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-bottom: 4px;
+    }}
+
+    .yvora-signal-value {{
+        color: {BRAND_BLUE};
+        font-size: 1.1rem;
+        font-weight: 800;
+        line-height: 1.2rem;
+    }}
+
+    .yvora-signal-sub {{
+        color: {BRAND_MUTED};
+        font-size: 0.82rem;
+        margin-top: 4px;
+        line-height: 1.1rem;
+    }}
+
+    .yvora-summary {{
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 10px;
+        margin-top: 12px;
+    }}
+
+    .yvora-line {{
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+        background: rgba(255,255,255,0.8);
+        border: 1px solid rgba(14,42,71,0.08);
+        padding: 12px 13px;
+        border-radius: 16px;
+        color: {BRAND_BLUE};
+        font-size: 0.95rem;
+        line-height: 1.38rem;
+    }}
+    </style>
+    """
+    st.markdown(css, unsafe_allow_html=True)
 
 
 # =========================================================
@@ -132,10 +339,8 @@ def tokenize_name(x: str) -> set[str]:
 def name_match_score(a: str, b: str) -> float:
     sa = tokenize_name(a)
     sb = tokenize_name(b)
-
     if not sa or not sb:
         return 0.0
-
     inter = len(sa & sb)
     return inter / max(1, min(len(sa), len(sb)))
 
@@ -371,6 +576,9 @@ def standardize_pairings(df: pd.DataFrame) -> pd.DataFrame:
     out["dish_count"] = out["ids_list"].apply(len)
     out.loc[out["dish_count"] == 0, "dish_count"] = out["names_list"].apply(len)
 
+    out["score_ord"] = pd.to_numeric(out["score_harmonizacao"], errors="coerce").fillna(0)
+    out["ordem_ord"] = pd.to_numeric(out["ordem_recomendacao"], errors="coerce").fillna(999)
+
     for c in out.columns:
         if out[c].dtype == object:
             out[c] = out[c].apply(clean_text)
@@ -402,7 +610,6 @@ def get_single_pairings(pairings: pd.DataFrame, prato_id: str, prato_nome: str) 
     id_key = make_ids_key([prato_id])
     name_key = make_names_key([prato_nome])
 
-    # 1) exato por ID
     by_id = pairings[
         (pairings["dish_count"] == 1) &
         (pairings["ids_key"] == id_key)
@@ -410,7 +617,6 @@ def get_single_pairings(pairings: pd.DataFrame, prato_id: str, prato_nome: str) 
     if not by_id.empty:
         return by_id
 
-    # 2) exato por nome normalizado
     by_name = pairings[
         (pairings["dish_count"] == 1) &
         (pairings["names_key"] == name_key)
@@ -418,7 +624,6 @@ def get_single_pairings(pairings: pd.DataFrame, prato_id: str, prato_nome: str) 
     if not by_name.empty:
         return by_name
 
-    # 3) flexível por nome
     candidates = pairings[pairings["dish_count"] == 1].copy()
     if candidates.empty:
         return candidates
@@ -457,7 +662,6 @@ def get_combo_pairings(pairings: pd.DataFrame, prato_ids: list[str], prato_nomes
     name_key = make_names_key(prato_nomes)
     target_count = len([x for x in prato_ids if normalize_id(x)]) or len(prato_nomes)
 
-    # 1) exato por ID
     by_id = pairings[
         (pairings["dish_count"] == target_count) &
         (pairings["ids_key"] == id_key)
@@ -465,7 +669,6 @@ def get_combo_pairings(pairings: pd.DataFrame, prato_ids: list[str], prato_nomes
     if not by_id.empty:
         return by_id
 
-    # 2) exato por nome
     by_name = pairings[
         (pairings["dish_count"] == target_count) &
         (pairings["names_key"] == name_key)
@@ -473,7 +676,6 @@ def get_combo_pairings(pairings: pd.DataFrame, prato_ids: list[str], prato_nomes
     if not by_name.empty:
         return by_name
 
-    # 3) flexível por nome
     candidates = pairings[pairings["dish_count"] == target_count].copy()
     if candidates.empty:
         return candidates
@@ -483,78 +685,194 @@ def get_combo_pairings(pairings: pd.DataFrame, prato_ids: list[str], prato_nomes
 
 
 # =========================================================
-# UI
+# VISUAL
 # =========================================================
-def render_sidebar() -> None:
-    st.sidebar.title("YVORA")
-    st.sidebar.caption("Meat & Cheese Lab")
+def render_logo(width: int | None = None, use_container_width: bool = False):
+    logo_url = get_secret("LOGO_URL", "")
+    try:
+        if LOGO_LOCAL_PATH.exists():
+            st.image(str(LOGO_LOCAL_PATH), width=width, use_container_width=use_container_width)
+            return
+    except Exception:
+        pass
 
-    if "dm" not in st.session_state:
-        st.session_state.dm = False
+    if logo_url:
+        try:
+            r = requests.get(logo_url, timeout=20)
+            r.raise_for_status()
+            st.image(r.content, width=width, use_container_width=use_container_width)
+            return
+        except Exception:
+            pass
 
-    st.sidebar.markdown("### Acesso DM")
-    if st.session_state.dm:
-        st.sidebar.success("Modo DM ativo")
-        if st.sidebar.button("Sair do DM", use_container_width=True):
+    st.caption("Logo não encontrada.")
+
+
+def render_sidebar():
+    with st.sidebar:
+        render_logo(use_container_width=True)
+        st.caption("YVORA | Meat & Cheese Lab")
+
+        if "dm" not in st.session_state:
             st.session_state.dm = False
-            st.rerun()
-    else:
-        pwd = st.sidebar.text_input("Senha", type="password")
-        if st.sidebar.button("Entrar", use_container_width=True):
-            admin_password = get_secret("ADMIN_PASSWORD", "")
-            if pwd and admin_password and pwd == admin_password:
-                st.session_state.dm = True
+
+        st.markdown("### Acesso DM")
+        if st.session_state.dm:
+            st.success("Modo DM ativo")
+            if st.button("Sair do DM", use_container_width=True):
+                st.session_state.dm = False
                 st.rerun()
-            else:
-                st.sidebar.error("Senha inválida.")
+        else:
+            pwd = st.text_input("Senha", type="password", placeholder="Digite a senha do DM")
+            if st.button("Entrar", use_container_width=True):
+                admin_password = get_secret("ADMIN_PASSWORD", "")
+                if pwd and admin_password and pwd == admin_password:
+                    st.session_state.dm = True
+                    st.rerun()
+                else:
+                    st.error("Senha inválida.")
 
 
-def render_header() -> None:
-    st.title("Wine Pairing")
-    st.caption("Escolha até 2 pratos para ver a recomendação de vinho.")
+def render_header():
+    st.markdown("<div class='yvora-shell'>", unsafe_allow_html=True)
+
+    c1, c2 = st.columns([1, 4], vertical_alignment="center")
+    with c1:
+        render_logo(width=130)
+    with c2:
+        st.markdown(
+            """
+            <div class="yvora-hero">
+              <div class="yvora-title">Wine Pairing</div>
+              <div class="yvora-subtitle">Escolha até 2 pratos para ver a recomendação de vinho.</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 def render_pairing_block(title: str, df: pd.DataFrame, wines_meta: dict) -> None:
-    st.subheader(title)
+    st.markdown(f"<div class='yvora-section-head'>{title}</div>", unsafe_allow_html=True)
 
-    for _, row in df.head(2).iterrows():
+    df = df.copy()
+    has_order = (df["ordem_ord"] < 999).any()
+
+    if has_order:
+        df = df.sort_values(["ordem_ord", "score_ord", "nome_vinho"], ascending=[True, False, True])
+    else:
+        df = df.sort_values(["score_ord", "nome_vinho"], ascending=[False, True])
+
+    df = df.head(2)
+
+    for i, (_, row) in enumerate(df.iterrows(), start=1):
         row = row.to_dict()
         meta = wines_meta.get(row.get("id_vinho", ""), {})
 
-        with st.container(border=True):
-            st.markdown(f"**{clean_text(row.get('nome_vinho', ''))}**")
+        st.markdown("<div class='yvora-card'>", unsafe_allow_html=True)
 
-            origem = " • ".join([x for x in [meta.get("country", ""), meta.get("region", "")] if clean_text(x)])
-            if origem:
-                st.caption(origem)
+        st.markdown(
+            f"<div class='yvora-card-title'>{clean_text(row.get('nome_vinho', ''))}</div>",
+            unsafe_allow_html=True,
+        )
 
-            c1, c2 = st.columns(2)
-            c1.write("**Score**")
-            c1.write(score_to_stars(row.get("score_harmonizacao", "")))
-            c2.write("**Estratégia**")
-            c2.write(clean_text(row.get("estrategia_harmonizacao", "")) or "-")
+        origem = " • ".join([x for x in [meta.get("country", ""), meta.get("region", "")] if clean_text(x)])
+        if origem:
+            st.markdown(f"<div class='yvora-card-sub'>{origem}</div>", unsafe_allow_html=True)
+        else:
+            st.markdown("<div class='yvora-card-sub'></div>", unsafe_allow_html=True)
 
-            st.write("**Papel do vinho**")
-            st.write(clean_text(row.get("papel_do_vinho", "")) or "-")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown(
+                f"""
+                <div class="yvora-signal-box">
+                  <div class="yvora-signal-label">✨ {i}ª opção</div>
+                  <div class="yvora-signal-value">{score_to_stars(row.get('score_harmonizacao', ''))}</div>
+                  <div class="yvora-signal-sub">Score Match</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with c2:
+            st.markdown(
+                f"""
+                <div class="yvora-signal-box">
+                  <div class="yvora-signal-label">Estratégia</div>
+                  <div class="yvora-signal-value">{clean_text(row.get('estrategia_harmonizacao', '')) or '-'}</div>
+                  <div class="yvora-signal-sub">Como o vinho entra</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
-            if clean_text(row.get("frase_mesa", "")):
-                st.info(clean_text(row.get("frase_mesa", "")))
+        st.write("")
 
-            col1, col2, col3 = st.columns(3)
-            col1.write("**Carne**")
-            col1.write(clean_text(row.get("por_que_carne", "")) or "-")
-            col2.write("**Queijo**")
-            col2.write(clean_text(row.get("por_que_queijo", "")) or "-")
-            col3.write("**Conjunto**")
-            col3.write(clean_text(row.get("por_que_combo", "")) or "-")
+        st.markdown(
+            f"""
+            <div class="yvora-signal-box">
+              <div class="yvora-signal-label">Papel do vinho</div>
+              <div class="yvora-signal-value">{clean_text(row.get('papel_do_vinho', '')) or '-'}</div>
+              <div class="yvora-signal-sub">O que ele faz</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
-            if clean_text(row.get("por_que_vale", "")):
-                st.write("**Valor da escolha**")
+        chips = []
+        if clean_text(row.get("rotulo_valor", "")):
+            chips.append(f"<span class='yvora-chip'>🏷️ {clean_text(row.get('rotulo_valor', ''))}</span>")
+        if clean_text(row.get("perfil_vinho", "")):
+            chips.append(f"<span class='yvora-chip'>🍇 {clean_text(row.get('perfil_vinho', ''))}</span>")
+        if clean_text(row.get("estrategia_harmonizacao", "")):
+            chips.append(f"<span class='yvora-chip'>✨ {clean_text(row.get('estrategia_harmonizacao', ''))}</span>")
+        tipo_meta = clean_text(meta.get("tipo_vinho", "")) or clean_text(row.get("tipo_vinho", ""))
+        if tipo_meta:
+            chips.append(f"<span class='yvora-chip'>🍷 {tipo_meta}</span>")
+
+        if chips:
+            st.markdown("".join(chips), unsafe_allow_html=True)
+
+        if clean_text(row.get("frase_mesa", "")):
+            st.markdown(
+                f"<div class='yvora-quote'>💬 {clean_text(row.get('frase_mesa', ''))}</div>",
+                unsafe_allow_html=True,
+            )
+
+        if clean_text(row.get("motivo_score", "")):
+            st.markdown(
+                f"<div class='yvora-context'><b>Motivo técnico:</b> {clean_text(row.get('motivo_score', ''))}</div>",
+                unsafe_allow_html=True,
+            )
+
+        if (
+            clean_text(row.get("por_que_carne", "")) or
+            clean_text(row.get("por_que_queijo", "")) or
+            clean_text(row.get("por_que_combo", ""))
+        ):
+            st.markdown(
+                f"""
+                <div class="yvora-summary">
+                  <div class="yvora-line">🥩 <span>{clean_text(row.get('por_que_carne', '')) or '-'}</span></div>
+                  <div class="yvora-line">🧀 <span>{clean_text(row.get('por_que_queijo', '')) or '-'}</span></div>
+                  <div class="yvora-line">🧠 <span>{clean_text(row.get('por_que_combo', '')) or '-'}</span></div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        if clean_text(row.get("por_que_vale", "")):
+            with st.expander("Ver leitura completa"):
+                st.markdown("**Valor da escolha**")
                 st.write(clean_text(row.get("por_que_vale", "")))
 
+        st.markdown("</div>", unsafe_allow_html=True)
 
+
+# =========================================================
+# CLIENT
+# =========================================================
 def render_client(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFrame) -> None:
-    st.markdown("### Escolha seus pratos")
+    st.markdown("<div class='yvora-section-head'>Escolha seus pratos</div>", unsafe_allow_html=True)
 
     selected_names = st.multiselect(
         "Escolha seus pratos",
@@ -587,7 +905,10 @@ def render_client(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFram
         combo_rows = filter_available(combo_rows, wines)
 
         if combo_rows.empty:
-            st.warning("Não existe recomendação exata para esta dupla.")
+            st.markdown(
+                "<div class='yvora-warn'><b>Sem recomendação para a combinação agora.</b><br>Não existe linha correspondente no pairings.</div>",
+                unsafe_allow_html=True,
+            )
         else:
             render_pairing_block("Sugestão para a combinação", combo_rows, wines_meta)
 
@@ -598,13 +919,20 @@ def render_client(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFram
         single_rows = filter_available(single_rows, wines)
 
         if single_rows.empty:
-            st.warning(f"{pname}: não existe linha individual correspondente no pairings.")
+            st.markdown(
+                f"<div class='yvora-warn'><b>{pname}:</b> não existe linha individual correspondente no pairings.</div>",
+                unsafe_allow_html=True,
+            )
         else:
             render_pairing_block(f"Melhor por prato • {pname}", single_rows, wines_meta)
 
 
+# =========================================================
+# DM
+# =========================================================
 def render_dm(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFrame) -> None:
-    st.subheader("Diagnóstico DM")
+    st.markdown("<div class='yvora-section-head'>Diagnóstico DM</div>", unsafe_allow_html=True)
+
     st.write(f"MENU: {len(menu)} linhas")
     st.write(f"WINES: {len(wines)} linhas")
     st.write(f"PAIRINGS: {len(pairings)} linhas")
@@ -624,28 +952,40 @@ def render_dm(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFrame) -
             candidates = pairings[pairings["dish_count"] == 1].copy()
             by_flex = candidates[candidates["nomes_pratos"].apply(lambda x: names_match_flexible(prato_nome, x))].copy()
 
-            st.write({
-                "prato_nome": prato_nome,
-                "id_prato": prato_id,
-                "ids_key": id_key,
-                "names_key": name_key,
-                "matches_por_id": len(by_id),
-                "matches_por_nome_exato": len(by_name),
-                "matches_por_nome_flex": len(by_flex),
-            })
+            st.write(
+                {
+                    "prato_nome": prato_nome,
+                    "id_prato": prato_id,
+                    "ids_key": id_key,
+                    "names_key": name_key,
+                    "matches_por_id": len(by_id),
+                    "matches_por_nome_exato": len(by_name),
+                    "matches_por_nome_flex": len(by_flex),
+                }
+            )
 
             if not by_id.empty:
-                st.dataframe(by_id[["ids_pratos", "ids_key", "nomes_pratos", "names_key", "id_vinho", "nome_vinho"]], use_container_width=True)
+                st.dataframe(
+                    by_id[["ids_pratos", "ids_key", "nomes_pratos", "names_key", "id_vinho", "nome_vinho"]],
+                    use_container_width=True,
+                )
             elif not by_name.empty:
-                st.dataframe(by_name[["ids_pratos", "ids_key", "nomes_pratos", "names_key", "id_vinho", "nome_vinho"]], use_container_width=True)
+                st.dataframe(
+                    by_name[["ids_pratos", "ids_key", "nomes_pratos", "names_key", "id_vinho", "nome_vinho"]],
+                    use_container_width=True,
+                )
             elif not by_flex.empty:
-                st.dataframe(by_flex[["ids_pratos", "ids_key", "nomes_pratos", "names_key", "id_vinho", "nome_vinho"]], use_container_width=True)
+                st.dataframe(
+                    by_flex[["ids_pratos", "ids_key", "nomes_pratos", "names_key", "id_vinho", "nome_vinho"]],
+                    use_container_width=True,
+                )
 
 
 # =========================================================
 # MAIN
 # =========================================================
 def main() -> None:
+    set_page_style()
     render_sidebar()
     render_header()
 
@@ -677,6 +1017,8 @@ def main() -> None:
         render_dm(menu, wines, pairings)
     else:
         render_client(menu, wines, pairings)
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 if __name__ == "__main__":

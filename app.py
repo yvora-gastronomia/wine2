@@ -126,6 +126,202 @@ def safe_numeric_series(series: pd.Series) -> pd.Series:
 
 
 # =========================================================
+# STYLE
+# =========================================================
+def set_page_style() -> None:
+    st.set_page_config(
+        page_title=APP_TITLE,
+        page_icon="🍷",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
+
+    css = f"""
+    <style>
+    .stApp {{
+        background: linear-gradient(180deg, {BRAND_BG} 0%, #FBF8F3 100%);
+    }}
+
+    [data-testid="stSidebar"] {{
+        background: linear-gradient(180deg, rgba(14,42,71,0.98) 0%, rgba(14,42,71,0.94) 100%);
+        border-right: 1px solid rgba(255,255,255,0.08);
+    }}
+
+    [data-testid="stSidebar"] * {{
+        color: {BRAND_WHITE};
+    }}
+
+    .block-container {{
+        padding-top: 1.2rem;
+        padding-bottom: 2rem;
+    }}
+
+    .yvora-shell {{
+        max-width: 1240px;
+        margin: 0 auto;
+    }}
+
+    .yvora-hero {{
+        background: linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(245,239,231,0.95) 100%);
+        border: 1px solid rgba(14,42,71,0.08);
+        box-shadow: 0 14px 36px rgba(14,42,71,0.08);
+        border-radius: 26px;
+        padding: 22px;
+        margin-bottom: 18px;
+    }}
+
+    .yvora-title {{
+        color: {BRAND_BLUE};
+        font-size: 2.15rem;
+        font-weight: 800;
+        margin: 0;
+    }}
+
+    .yvora-subtitle {{
+        color: {BRAND_MUTED};
+        font-size: 1rem;
+        line-height: 1.45rem;
+        margin-top: 8px;
+        max-width: 700px;
+    }}
+
+    .yvora-card {{
+        background: linear-gradient(180deg, {BRAND_CARD} 0%, {BRAND_SOFT} 100%);
+        border-radius: 22px;
+        padding: 18px 18px 14px 18px;
+        border: 1px solid rgba(14,42,71,0.08);
+        margin-bottom: 18px;
+        box-shadow: 0 10px 28px rgba(14,42,71,0.05);
+    }}
+
+    .yvora-card-title {{
+        font-size: 1.28rem;
+        font-weight: 800;
+        color: {BRAND_BLUE};
+        margin-bottom: 4px;
+    }}
+
+    .yvora-card-sub, .yvora-mini {{
+        color: {BRAND_MUTED};
+    }}
+
+    .yvora-card-sub {{
+        font-size: 0.93rem;
+        margin-bottom: 10px;
+    }}
+
+    .yvora-section-head {{
+        color: {BRAND_BLUE};
+        font-size: 1.02rem;
+        font-weight: 800;
+        margin: 6px 0 8px 0;
+    }}
+
+    .yvora-warn {{
+        background: {BRAND_WARN};
+        border-radius: 14px;
+        padding: 14px 16px;
+        border: 1px solid rgba(14,42,71,0.08);
+        color: {BRAND_BLUE};
+        white-space: pre-wrap;
+    }}
+
+    .yvora-chip {{
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 11px;
+        border-radius: 999px;
+        border: 1px solid rgba(14,42,71,0.12);
+        color: {BRAND_BLUE};
+        font-size: 0.82rem;
+        font-weight: 600;
+        margin-right: 7px;
+        margin-top: 6px;
+        background: rgba(255,255,255,0.8);
+        white-space: nowrap;
+    }}
+
+    .yvora-quote {{
+        background: rgba(255,255,255,0.86);
+        border: 1px solid rgba(14,42,71,0.08);
+        border-radius: 16px;
+        padding: 14px 15px;
+        margin: 14px 0 12px 0;
+        color: {BRAND_BLUE};
+        font-weight: 700;
+        font-size: 1rem;
+        line-height: 1.45rem;
+    }}
+
+    .yvora-context {{
+        background: rgba(255,255,255,0.78);
+        border: 1px solid rgba(14,42,71,0.08);
+        border-radius: 18px;
+        padding: 15px;
+        margin: 12px 0;
+        color: {BRAND_BLUE};
+        font-size: 0.95rem;
+        line-height: 1.5rem;
+    }}
+
+    .yvora-signal-box {{
+        background: rgba(255,255,255,0.78);
+        border: 1px solid rgba(14,42,71,0.08);
+        border-radius: 16px;
+        padding: 12px;
+        min-height: 72px;
+        height: 100%;
+    }}
+
+    .yvora-signal-label {{
+        color: {BRAND_MUTED};
+        font-size: 0.76rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-bottom: 4px;
+    }}
+
+    .yvora-signal-value {{
+        color: {BRAND_BLUE};
+        font-size: 1.1rem;
+        font-weight: 800;
+        line-height: 1.2rem;
+    }}
+
+    .yvora-signal-sub {{
+        color: {BRAND_MUTED};
+        font-size: 0.82rem;
+        margin-top: 4px;
+        line-height: 1.1rem;
+    }}
+
+    .yvora-summary {{
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 10px;
+        margin-top: 12px;
+    }}
+
+    .yvora-line {{
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+        background: rgba(255,255,255,0.8);
+        border: 1px solid rgba(14,42,71,0.08);
+        padding: 12px 13px;
+        border-radius: 16px;
+        color: {BRAND_BLUE};
+        font-size: 0.95rem;
+        line-height: 1.38rem;
+    }}
+    </style>
+    """
+    st.markdown(css, unsafe_allow_html=True)
+
+
+# =========================================================
 # GOOGLE SHEETS CSV LOADER
 # =========================================================
 def _decode_csv_bytes(raw: bytes) -> str:
@@ -465,7 +661,6 @@ def filter_to_available_wines(pairings_subset: pd.DataFrame, wines: pd.DataFrame
         ]["id_vinho"].astype(str).tolist()
     )
 
-    # se não houver info suficiente de estoque/ativo, não mata resultado
     if not available_ids and len(wines) > 0:
         return pairings_subset.copy()
 

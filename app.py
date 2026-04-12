@@ -55,7 +55,6 @@ def set_page_style() -> None:
         .yvora-card-sub {{ color: {BRAND_MUTED}; font-size: 0.93rem; margin-bottom: 10px; }}
         .yvora-section-head {{ color: {BRAND_BLUE}; font-size: 1.02rem; font-weight: 800; margin: 6px 0 8px 0; }}
         .yvora-warn {{ background: {BRAND_WARN}; border-radius: 14px; padding: 14px 16px; border: 1px solid rgba(14,42,71,0.08); color: {BRAND_BLUE}; white-space: pre-wrap; }}
-        .yvora-chip {{ display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px; border-radius: 999px; border: 1px solid rgba(14,42,71,0.12); color: {BRAND_BLUE}; font-size: 0.82rem; font-weight: 600; margin-right: 7px; margin-top: 6px; background: rgba(255,255,255,0.8); white-space: nowrap; }}
         .yvora-signal-box {{ background: rgba(255,255,255,0.78); border: 1px solid rgba(14,42,71,0.08); border-radius: 16px; padding: 12px; min-height: 72px; height: 100%; }}
         .yvora-signal-label {{ color: {BRAND_MUTED}; font-size: 0.76rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }}
         .yvora-signal-value {{ color: {BRAND_BLUE}; font-size: 1.1rem; font-weight: 800; line-height: 1.2rem; }}

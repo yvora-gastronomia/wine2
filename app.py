@@ -624,12 +624,7 @@ def get_single_pairings(pairings: pd.DataFrame, prato_id: str, prato_nome: str) 
     if not by_name.empty:
         return by_name
 
-    candidates = pairings[pairings["dish_count"] == 1].copy()
-    if candidates.empty:
-        return candidates
-
-    mask = candidates["nomes_pratos"].apply(lambda x: names_match_flexible(prato_nome, x))
-    return candidates[mask].copy()
+    return pairings.iloc[0:0].copy()
 
 
 def combo_names_match_flexible(target_names: list[str], row_names_raw: str) -> bool:
@@ -676,12 +671,7 @@ def get_combo_pairings(pairings: pd.DataFrame, prato_ids: list[str], prato_nomes
     if not by_name.empty:
         return by_name
 
-    candidates = pairings[pairings["dish_count"] == target_count].copy()
-    if candidates.empty:
-        return candidates
-
-    mask = candidates["nomes_pratos"].apply(lambda x: combo_names_match_flexible(prato_nomes, x))
-    return candidates[mask].copy()
+    return pairings.iloc[0:0].copy()
 
 
 # =========================================================

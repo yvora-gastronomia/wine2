@@ -218,6 +218,37 @@ def set_page_style() -> None:
         font-size: 0.95rem;
         line-height: 1.38rem;
     }}
+
+    .sensorial-card {{
+        background: rgba(255,255,255,0.86);
+        border: 1px solid rgba(14,42,71,0.08);
+        border-radius: 16px;
+        padding: 14px 15px;
+        margin: 14px 0 12px 0;
+        color: {BRAND_BLUE};
+    }}
+
+    .sensorial-block {{
+        margin-bottom: 13px;
+    }}
+
+    .sensorial-block:last-child {{
+        margin-bottom: 0;
+    }}
+
+    .sensorial-title {{
+        font-weight: 800;
+        color: {BRAND_BLUE};
+        font-size: 1rem;
+        margin-bottom: 3px;
+    }}
+
+    .sensorial-text {{
+        color: {BRAND_BLUE};
+        font-size: 0.98rem;
+        line-height: 1.42rem;
+        font-weight: 600;
+    }}
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
@@ -384,6 +415,15 @@ def score_to_stars(score_raw: str) -> str:
     else:
         n = 1
     return "★" * n + "☆" * (5 - n)
+
+
+def get_value(row: dict, *cols: str, default: str = "") -> str:
+    for col in cols:
+        if col in row:
+            value = clean_text(row.get(col, ""))
+            if value:
+                return value
+    return default
 
 
 # =========================================================
@@ -556,6 +596,13 @@ def standardize_pairings(df: pd.DataFrame) -> pd.DataFrame:
         "por_que_queijo": "",
         "por_que_combo": "",
         "por_que_vale": "",
+        "visual": "",
+        "leitura_visual": "",
+        "intuição aromática": "",
+        "intuicao_aromatica": "",
+        "intuição_aromatica": "",
+        "experiencia_sensorial": "",
+        "experiência_sensorial": "",
     }
     for c, d in defaults.items():
         if c not in raw.columns:
@@ -832,7 +879,33 @@ def render_pairing_block(title: str, df: pd.DataFrame, wines_meta: dict) -> None
         if chips:
             st.markdown("".join(chips), unsafe_allow_html=True)
 
-        if clean_text(row.get("frase_mesa", "")):
+        visual = get_value(row, "visual", "leitura_visual")
+        aroma = get_value(row, "intuição aromática", "intuicao_aromatica", "intuição_aromatica")
+        experiencia = get_value(row, "experiencia_sensorial", "experiência_sensorial")
+
+        if visual or aroma or experiencia:
+            st.markdown(
+                f"""
+                <div class="sensorial-card">
+                    <div class="sensorial-block">
+                        <div class="sensorial-title">👁 Visual</div>
+                        <div class="sensorial-text">{visual or '-'}</div>
+                    </div>
+
+                    <div class="sensorial-block">
+                        <div class="sensorial-title">👃 Intuição aromática</div>
+                        <div class="sensorial-text">{aroma or '-'}</div>
+                    </div>
+
+                    <div class="sensorial-block">
+                        <div class="sensorial-title">🍽 Experiência</div>
+                        <div class="sensorial-text">{experiencia or clean_text(row.get('frase_mesa', '')) or '-'}</div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        elif clean_text(row.get("frase_mesa", "")):
             st.markdown(
                 f"<div class='yvora-quote'>💬 {clean_text(row.get('frase_mesa', ''))}</div>",
                 unsafe_allow_html=True,

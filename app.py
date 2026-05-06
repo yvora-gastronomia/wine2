@@ -279,29 +279,6 @@ def clean_text(x) -> str:
     return re.sub(r"\s+", " ", norm_text(x)).strip()
 
 
-def clean_html_text(x) -> str:
-    s = norm_text(x)
-    if not s:
-        return ""
-
-    s = s.replace("<br>", " ").replace("<br/>", " ").replace("<br />", " ")
-    s = re.sub(r"</?div[^>]*>", " ", s, flags=re.IGNORECASE)
-    s = re.sub(r"</?span[^>]*>", " ", s, flags=re.IGNORECASE)
-    s = re.sub(r"</?b[^>]*>", " ", s, flags=re.IGNORECASE)
-    s = re.sub(r"<[^>]+>", " ", s)
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
-
-
-def get_value(row: dict, *cols: str, default: str = "") -> str:
-    for col in cols:
-        if col in row:
-            value = clean_html_text(row.get(col, ""))
-            if value:
-                return value
-    return default
-
-
 def strip_accents(s: str) -> str:
     s = unicodedata.normalize("NFD", s)
     return "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
@@ -642,7 +619,7 @@ def standardize_pairings(df: pd.DataFrame) -> pd.DataFrame:
 
     for c in out.columns:
         if out[c].dtype == object:
-            out[c] = out[c].apply(clean_html_text)
+            out[c] = out[c].apply(clean_text)
 
     return out
 
@@ -832,11 +809,11 @@ def render_pairing_block(title: str, df: pd.DataFrame, wines_meta: dict) -> None
         st.markdown("<div class='yvora-card'>", unsafe_allow_html=True)
 
         st.markdown(
-            f"<div class='yvora-card-title'>{clean_html_text(row.get('nome_vinho', ''))}</div>",
+            f"<div class='yvora-card-title'>{clean_text(row.get('nome_vinho', ''))}</div>",
             unsafe_allow_html=True,
         )
 
-        origem = " • ".join([x for x in [meta.get("country", ""), meta.get("region", "")] if clean_html_text(x)])
+        origem = " • ".join([x for x in [meta.get("country", ""), meta.get("region", "")] if clean_text(x)])
         if origem:
             st.markdown(f"<div class='yvora-card-sub'>{origem}</div>", unsafe_allow_html=True)
         else:
@@ -859,7 +836,7 @@ def render_pairing_block(title: str, df: pd.DataFrame, wines_meta: dict) -> None
                 f"""
                 <div class="yvora-signal-box">
                   <div class="yvora-signal-label">Estratégia</div>
-                  <div class="yvora-signal-value">{clean_html_text(row.get('estrategia_harmonizacao', '')) or '-'}</div>
+                  <div class="yvora-signal-value">{clean_text(row.get('estrategia_harmonizacao', '')) or '-'}</div>
                   <div class="yvora-signal-sub">Como o vinho entra</div>
                 </div>
                 """,
@@ -872,7 +849,7 @@ def render_pairing_block(title: str, df: pd.DataFrame, wines_meta: dict) -> None
             f"""
             <div class="yvora-signal-box">
               <div class="yvora-signal-label">Papel do vinho</div>
-              <div class="yvora-signal-value">{clean_html_text(row.get('papel_do_vinho', '')) or '-'}</div>
+              <div class="yvora-signal-value">{clean_text(row.get('papel_do_vinho', '')) or '-'}</div>
               <div class="yvora-signal-sub">O que ele faz</div>
             </div>
             """,
@@ -880,22 +857,22 @@ def render_pairing_block(title: str, df: pd.DataFrame, wines_meta: dict) -> None
         )
 
         chips = []
-        if clean_html_text(row.get("rotulo_valor", "")):
-            chips.append(f"<span class='yvora-chip'>🏷️ {clean_html_text(row.get('rotulo_valor', ''))}</span>")
-        if clean_html_text(row.get("perfil_vinho", "")):
-            chips.append(f"<span class='yvora-chip'>🍇 {clean_html_text(row.get('perfil_vinho', ''))}</span>")
-        if clean_html_text(row.get("estrategia_harmonizacao", "")):
-            chips.append(f"<span class='yvora-chip'>✨ {clean_html_text(row.get('estrategia_harmonizacao', ''))}</span>")
-        tipo_meta = clean_html_text(meta.get("tipo_vinho", "")) or clean_html_text(row.get("tipo_vinho", ""))
+        if clean_text(row.get("rotulo_valor", "")):
+            chips.append(f"<span class='yvora-chip'>🏷️ {clean_text(row.get('rotulo_valor', ''))}</span>")
+        if clean_text(row.get("perfil_vinho", "")):
+            chips.append(f"<span class='yvora-chip'>🍇 {clean_text(row.get('perfil_vinho', ''))}</span>")
+        if clean_text(row.get("estrategia_harmonizacao", "")):
+            chips.append(f"<span class='yvora-chip'>✨ {clean_text(row.get('estrategia_harmonizacao', ''))}</span>")
+        tipo_meta = clean_text(meta.get("tipo_vinho", "")) or clean_text(row.get("tipo_vinho", ""))
         if tipo_meta:
             chips.append(f"<span class='yvora-chip'>🍷 {tipo_meta}</span>")
 
         if chips:
             st.markdown("".join(chips), unsafe_allow_html=True)
 
-        visual = get_value(row, "visual", "leitura_visual")
-        aroma = get_value(row, "intuição aromática", "intuicao_aromatica", "intuição_aromatica")
-        experiencia = get_value(row, "experiencia_sensorial", "experiência_sensorial")
+        visual = clean_text(row.get("visual", "")) or clean_text(row.get("leitura_visual", ""))
+        aroma = clean_text(row.get("intuição aromática", "")) or clean_text(row.get("intuicao_aromatica", ""))
+        experiencia = clean_text(row.get("experiencia_sensorial", "")) or clean_text(row.get("experiência_sensorial", ""))
 
         if visual or aroma or experiencia:
             st.markdown(
@@ -905,12 +882,10 @@ def render_pairing_block(title: str, df: pd.DataFrame, wines_meta: dict) -> None
                         <div class="sensorial-title">👁 Visual</div>
                         <div class="sensorial-text">{visual or '-'}</div>
                     </div>
-
                     <div class="sensorial-block">
                         <div class="sensorial-title">👃 Intuição aromática</div>
                         <div class="sensorial-text">{aroma or '-'}</div>
                     </div>
-
                     <div class="sensorial-block">
                         <div class="sensorial-title">🍽 Experiência</div>
                         <div class="sensorial-text">{experiencia or '-'}</div>
@@ -919,38 +894,38 @@ def render_pairing_block(title: str, df: pd.DataFrame, wines_meta: dict) -> None
                 """,
                 unsafe_allow_html=True,
             )
-        elif clean_html_text(row.get("frase_mesa", "")):
+        elif clean_text(row.get("frase_mesa", "")):
             st.markdown(
-                f"<div class='yvora-quote'>💬 {clean_html_text(row.get('frase_mesa', ''))}</div>",
+                f"<div class='yvora-quote'>💬 {clean_text(row.get('frase_mesa', ''))}</div>",
                 unsafe_allow_html=True,
             )
 
-        if clean_html_text(row.get("motivo_score", "")):
+        if clean_text(row.get("motivo_score", "")):
             st.markdown(
-                f"<div class='yvora-context'><b>Motivo técnico:</b> {clean_html_text(row.get('motivo_score', ''))}</div>",
+                f"<div class='yvora-context'><b>Motivo técnico:</b> {clean_text(row.get('motivo_score', ''))}</div>",
                 unsafe_allow_html=True,
             )
 
         if (
-            clean_html_text(row.get("por_que_carne", "")) or
-            clean_html_text(row.get("por_que_queijo", "")) or
-            clean_html_text(row.get("por_que_combo", ""))
+            clean_text(row.get("por_que_carne", "")) or
+            clean_text(row.get("por_que_queijo", "")) or
+            clean_text(row.get("por_que_combo", ""))
         ):
             st.markdown(
                 f"""
                 <div class="yvora-summary">
-                  <div class="yvora-line">🥩 <span>{clean_html_text(row.get('por_que_carne', '')) or '-'}</span></div>
-                  <div class="yvora-line">🧀 <span>{clean_html_text(row.get('por_que_queijo', '')) or '-'}</span></div>
-                  <div class="yvora-line">🧠 <span>{clean_html_text(row.get('por_que_combo', '')) or '-'}</span></div>
+                  <div class="yvora-line">🥩 <span>{clean_text(row.get('por_que_carne', '')) or '-'}</span></div>
+                  <div class="yvora-line">🧀 <span>{clean_text(row.get('por_que_queijo', '')) or '-'}</span></div>
+                  <div class="yvora-line">🧠 <span>{clean_text(row.get('por_que_combo', '')) or '-'}</span></div>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
 
-        if clean_html_text(row.get("por_que_vale", "")):
+        if clean_text(row.get("por_que_vale", "")):
             with st.expander("Ver leitura completa"):
                 st.markdown("**Valor da escolha**")
-                st.write(clean_html_text(row.get("por_que_vale", "")))
+                st.write(clean_text(row.get("por_que_vale", "")))
 
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -979,10 +954,10 @@ def render_client(menu: pd.DataFrame, wines: pd.DataFrame, pairings: pd.DataFram
 
     wines_meta = {
         str(row["id_vinho"]): {
-            "tipo_vinho": clean_html_text(row.get("tipo_vinho", "")),
-            "perfil_vinho": clean_html_text(row.get("perfil_vinho", "")),
-            "country": clean_html_text(row.get("country", "")),
-            "region": clean_html_text(row.get("region", "")),
+            "tipo_vinho": clean_text(row.get("tipo_vinho", "")),
+            "perfil_vinho": clean_text(row.get("perfil_vinho", "")),
+            "country": clean_text(row.get("country", "")),
+            "region": clean_text(row.get("region", "")),
         }
         for _, row in wines.iterrows()
     }

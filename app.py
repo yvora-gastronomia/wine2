@@ -279,6 +279,19 @@ def clean_text(x) -> str:
     return re.sub(r"\s+", " ", norm_text(x)).strip()
 
 
+def format_frase_mesa(frase: str) -> str:
+    texto = clean_text(frase)
+
+    if not texto:
+        return ""
+
+    texto = texto.replace("👁 Visual:", "<div class='sensorial-block'><div class='sensorial-title'>👁 Visual</div><div class='sensorial-text'>")
+    texto = texto.replace("👃 Intuição aromática:", "</div></div><div class='sensorial-block'><div class='sensorial-title'>👃 Intuição aromática</div><div class='sensorial-text'>")
+    texto = texto.replace("🍽 Experiência:", "</div></div><div class='sensorial-block'><div class='sensorial-title'>🍽 Experiência</div><div class='sensorial-text'>")
+
+    return f"<div class='sensorial-card'>{texto}</div></div></div>"
+
+
 def strip_accents(s: str) -> str:
     s = unicodedata.normalize("NFD", s)
     return "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
@@ -587,13 +600,6 @@ def standardize_pairings(df: pd.DataFrame) -> pd.DataFrame:
         "por_que_queijo": "",
         "por_que_combo": "",
         "por_que_vale": "",
-        "visual": "",
-        "leitura_visual": "",
-        "intuição aromática": "",
-        "intuicao_aromatica": "",
-        "intuição_aromatica": "",
-        "experiencia_sensorial": "",
-        "experiência_sensorial": "",
     }
     for c, d in defaults.items():
         if c not in raw.columns:
@@ -870,33 +876,9 @@ def render_pairing_block(title: str, df: pd.DataFrame, wines_meta: dict) -> None
         if chips:
             st.markdown("".join(chips), unsafe_allow_html=True)
 
-        visual = clean_text(row.get("visual", "")) or clean_text(row.get("leitura_visual", ""))
-        aroma = clean_text(row.get("intuição aromática", "")) or clean_text(row.get("intuicao_aromatica", ""))
-        experiencia = clean_text(row.get("experiencia_sensorial", "")) or clean_text(row.get("experiência_sensorial", ""))
-
-        if visual or aroma or experiencia:
+        if clean_text(row.get("frase_mesa", "")):
             st.markdown(
-                f"""
-                <div class="sensorial-card">
-                    <div class="sensorial-block">
-                        <div class="sensorial-title">👁 Visual</div>
-                        <div class="sensorial-text">{visual or '-'}</div>
-                    </div>
-                    <div class="sensorial-block">
-                        <div class="sensorial-title">👃 Intuição aromática</div>
-                        <div class="sensorial-text">{aroma or '-'}</div>
-                    </div>
-                    <div class="sensorial-block">
-                        <div class="sensorial-title">🍽 Experiência</div>
-                        <div class="sensorial-text">{experiencia or '-'}</div>
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-        elif clean_text(row.get("frase_mesa", "")):
-            st.markdown(
-                f"<div class='yvora-quote'>💬 {clean_text(row.get('frase_mesa', ''))}</div>",
+                format_frase_mesa(row.get("frase_mesa", "")),
                 unsafe_allow_html=True,
             )
 
